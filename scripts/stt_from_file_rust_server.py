@@ -94,12 +94,25 @@ async def send_messages(websocket, rtf: float):
         await send_audio([0.0] * SAMPLE_RATE)
 
 
-async def stream_audio(url: str, api_key: str, rtf: float):
+async def stream_audio(
+    url: str,
+    api_key: str,
+    rtf: float,
+    ping_interval: float | None,
+    ping_timeout: float | None,
+    close_timeout: float,
+):
     """Stream audio data to a WebSocket server."""
     headers = {"kyutai-api-key": api_key}
 
     # Instead of using the header, you can authenticate by adding `?auth_id={api_key}` to the URL
-    async with websockets.connect(url, additional_headers=headers) as websocket:
+    async with websockets.connect(
+        url,
+        additional_headers=headers,
+        ping_interval=ping_interval,
+        ping_timeout=ping_timeout,
+        close_timeout=close_timeout,
+    ) as websocket:
         send_task = asyncio.create_task(send_messages(websocket, rtf))
         receive_task = asyncio.create_task(receive_messages(websocket))
         _, transcript = await asyncio.gather(send_task, receive_task)
@@ -120,12 +133,41 @@ if __name__ == "__main__":
         "--rtf",
         type=float,
         default=1.01,
-        help="The real-time factor of how fast to feed in the audio.",
+        help="Real-time factor controlling how fast audio chunks are sent.",
+    )
+    parser.add_argument(
+        "--ping-interval",
+        type=float,
+        default=0.0,
+        help="Seconds between WebSocket keepalive pings (0 keeps pings disabled).",
+    )
+    parser.add_argument(
+        "--ping-timeout",
+        type=float,
+        default=0.0,
+        help="Seconds to wait for a pong before closing the connection (0 disables timeout).",
+    )
+    parser.add_argument(
+        "--close-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds to wait for the server to close the connection cleanly.",
     )
     args = parser.parse_args()
 
     url = f"{args.url}/api/asr-streaming"
-    transcript = asyncio.run(stream_audio(url, args.api_key, args.rtf))
+    ping_interval = None if args.ping_interval == 0 else args.ping_interval
+    ping_timeout = None if args.ping_timeout == 0 else args.ping_timeout
+    transcript = asyncio.run(
+        stream_audio(
+            url,
+            args.api_key,
+            args.rtf,
+            ping_interval,
+            ping_timeout,
+            args.close_timeout,
+        )
+    )
 
     print()
     print()

@@ -147,10 +147,39 @@ We also provide a script for transcribing from an audio file.
 uv run scripts/stt_from_file_rust_server.py audio/bria.mp3
 ```
 
-The script limits the decoding speed to simulates real-time processing of the audio. 
-Faster processing can be triggered by setting 
+The script limits the decoding speed to simulates real-time processing of the audio.
+Faster processing can be triggered by setting
 the real-time factor, e.g. `--rtf 1000` will process
 the data as fast as possible.
+
+#### Verifying CUDA is enabled
+
+Running the server with CUDA acceleration requires the CUDA toolkit to be
+installed locally. Before starting the server or compiling it with
+`--features cuda`, make sure that the NVIDIA compiler is available on the PATH
+and that the toolkit location is exported via `CUDA_HOME` (or `CUDA_PATH`):
+
+```bash
+which nvcc
+nvcc --version
+export CUDA_HOME=/usr/local/cuda
+```
+
+With CUDA available, you can verify the mic workflow end-to-end by
+
+1. building or installing `moshi-server` with the CUDA feature enabled,
+2. starting the server with the configuration file from this repository, and
+3. running the microphone client script which will connect to the server:
+
+```bash
+cargo install --features cuda moshi-server
+moshi-server worker --config configs/config-stt-en_fr-hf.toml
+uv run scripts/stt_from_mic_rust_server.py
+```
+
+If the CUDA toolkit is missing, building the server will fail with an error
+similar to `Failed to execute nvcc`, indicating that GPU acceleration is not
+available in the current environment.
 </details>
 
 <details>

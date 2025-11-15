@@ -151,6 +151,14 @@ The script limits the decoding speed to simulates real-time processing of the au
 Faster processing can be triggered by setting 
 the real-time factor, e.g. `--rtf 1000` will process
 the data as fast as possible.
+
+Both Rust-server helpers now flush a stream-end marker and a few seconds of silence
+even when you press Ctrl+C, so `moshi-server` no longer logs
+`recv_loop` errors about "Connection reset without closing handshake" when smoke tests
+finish or are interrupted early. The helpers keep draining server responses until
+Moshi emits its own `Marker`, then let the shared shutdown helper close the WebSocket
+so the full closing handshake lands before the client exits (fixing the
+2025-11-15 Moshi log regression).
 </details>
 
 <details>
@@ -307,6 +315,32 @@ and just prefix the command above with `uvx --with moshi-mlx`.
 
 Checkout the [Frequently Asked Questions](FAQ.md) section before opening an issue.
 
+## STT config validation notes
+
+- `TOKIO_WORKER_THREADS=1 moshi-server worker --config configs/config-stt-en_fr-lowram.toml --addr 0.0.0.0 --port 8999` fails with `DriverError(CUDA_ERROR_NOT_FOUND, "named symbol not found")` because this GPU apparently lacks the Ampere kernels Candle needs, so keep pointing `configs/config-stt-en_fr-lowram-sm75.toml` (or the fp16 path) at the converted checkpoint after you preprocess the model locally; the same raw log file also captures that failure.
+
+Recommended workflow for pre-Ampere (SM75 and earlier) cards:
+1. Run the prep helper, which detects your GPU and invokes the converter only
+   when needed, so SM75 assets are prepared via a single command:
+
+```bash
+uv run --with torch --with huggingface_hub --with safetensors \
+  scripts/prep_sm75_assets.py
+```
+
+   Use `--simulate sm75 --dry-run` when testing on a CPU-only machine or in CI.
+   If you just want to inspect devices without touching checkpoints, run the
+   capability helper directly:
+
+```bash
+uv run --with torch scripts/check_gpu_capability.py
+```
+
+2. Use `configs/config-stt-en_fr-lowram-sm75.toml`, which is pre-configured to load the fp16 asset and override the dtype.
+3. Run `python scripts/format_moshi_log.py logs/moshi-logs/raw/log.config-stt-en_fr-lowram-sm75.2025-11-15` (or point the helper at your own raw trace) to generate `logs/moshi-logs/log.config-stt-en_fr-lowram-sm75.2025-11-15`.
+   The formatter strips ANSI clutter, normalizes stray control characters, and renders UTC timestamps as local 12-hour times so the friendly log (along with the raw trace in `logs/moshi-logs/raw/log.foo.2025-11-15`) documents the `CUDA_ERROR_NOT_FOUND` failure path that occurs when the converted checkpoint is unavailable, helping you verify conversion is required before the worker can stay on CUDA.
+4. (Optional) Run `scripts/run_sm75_smoke_test.py` to launch (or simulate) `moshi-server worker --config configs/config-stt-en_fr-lowram-sm75.toml` and confirm CUDA stays up. CI exercises this via `--simulate-success`, while operators on real GPUs can omit the flag to test their runtime.
+
 ## License
 
 The present code is provided under the MIT license for the Python parts, and Apache license for the Rust backend.
@@ -318,14 +352,18 @@ The weights for the speech-to-text models are released under the CC-BY 4.0 licen
 
 ## Developing
 
-Install the [pre-commit hooks](https://pre-commit.com/) by running:
+Install the [pre-commit hooks](https://pre-commit.com/) and keep editor tooling happy by
+bootstrapping the managed virtual environment via [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install pre-commit
-pre-commit install
+uv sync --group dev
+uv run pre-commit install
 ```
 
-If you're using `uv`, you can replace the two commands with `uvx pre-commit install`.
+The `uv sync` step creates `.venv` and installs the shared dev dependencies
+(`autopep8`, `msgpack`, `numpy`, `sounddevice`, `websockets`, etc.) so VS Code's
+Python extension, autopep8 formatter, and Pylance can resolve imports without
+extra manual setup.
 
 ## Citation
 

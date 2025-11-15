@@ -9,6 +9,7 @@
 # ///
 import argparse
 import asyncio
+import contextlib
 import time
 
 import msgpack
@@ -18,6 +19,8 @@ import websockets
 
 SAMPLE_RATE = 24000
 FRAME_SIZE = 1920  # Send data in chunks
+WS_CLOSE_REASON = "client finished streaming"
+SILENCE_SECOND = [0.0] * SAMPLE_RATE
 
 
 def load_and_process_audio(file_path):
@@ -56,7 +59,7 @@ async def receive_messages(websocket):
 async def send_messages(websocket, rtf: float):
     audio_data = load_and_process_audio(args.in_file)
 
-    async def send_audio(audio: np.ndarray):
+    async def send_audio(audio: np.ndarray | list[float]):
         await websocket.send(
             msgpack.packb(
                 {"type": "Audio", "pcm": [float(x) for x in audio]},
@@ -64,34 +67,73 @@ async def send_messages(websocket, rtf: float):
             )
         )
 
+    marker_msg = msgpack.packb({"type": "Marker", "id": 0}, use_single_float=True)
+    stream_closed = False
+
+    async def send_stream_end():
+        nonlocal stream_closed
+        if stream_closed:
+            return
+        stream_closed = True
+        try:
+            for _ in range(5):
+                await send_audio(SILENCE_SECOND)
+            with contextlib.suppress(websockets.ConnectionClosed):
+                await websocket.send(marker_msg)
+            for _ in range(35):
+                await send_audio(SILENCE_SECOND)
+        except asyncio.CancelledError:
+            # Propagate cancellation after ensuring the marker/silence is flushed.
+            raise
+        except websockets.ConnectionClosed:
+            # Connection already closed; nothing else to send.
+            return
+
     # Start with a second of silence.
     # This is needed for the 2.6B model for technical reasons.
-    await send_audio([0.0] * SAMPLE_RATE)
+    await send_audio(SILENCE_SECOND)
 
     start_time = time.time()
-    for i in range(0, len(audio_data), FRAME_SIZE):
-        await send_audio(audio_data[i : i + FRAME_SIZE])
+    try:
+        for i in range(0, len(audio_data), FRAME_SIZE):
+            await send_audio(audio_data[i : i + FRAME_SIZE])
 
-        expected_send_time = start_time + (i + 1) / SAMPLE_RATE / rtf
-        current_time = time.time()
-        if current_time < expected_send_time:
-            await asyncio.sleep(expected_send_time - current_time)
-        else:
-            await asyncio.sleep(0.001)
+            expected_send_time = start_time + (i + 1) / SAMPLE_RATE / rtf
+            current_time = time.time()
+            if current_time < expected_send_time:
+                await asyncio.sleep(expected_send_time - current_time)
+            else:
+                await asyncio.sleep(0.001)
 
-    for _ in range(5):
-        await send_audio([0.0] * SAMPLE_RATE)
+        await send_stream_end()
+    except asyncio.CancelledError:
+        await asyncio.shield(send_stream_end())
+        raise
+    finally:
+        await asyncio.shield(send_stream_end())
 
-    # Send a marker to indicate the end of the stream.
-    await websocket.send(
-        msgpack.packb({"type": "Marker", "id": 0}, use_single_float=True)
-    )
 
-    # We'll get back the marker once the corresponding audio has been transcribed,
-    # accounting for the delay of the model. That's why we need to send some silence
-    # after the marker, because the model will not return the marker immediately.
-    for _ in range(35):
-        await send_audio([0.0] * SAMPLE_RATE)
+async def _cancel_task(task: asyncio.Task | None) -> None:
+    if task is None or task.done():
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def _close_websocket(websocket) -> None:
+    if websocket.closed:
+        return
+    with contextlib.suppress(websockets.ConnectionClosed):
+        await websocket.close(code=1000, reason=WS_CLOSE_REASON)
+    with contextlib.suppress(websockets.ConnectionClosed):
+        await websocket.wait_closed()
+
+
+async def _shutdown_session(websocket, *tasks: asyncio.Task) -> None:
+    for task in tasks:
+        await _cancel_task(task)
+    await _close_websocket(websocket)
 
 
 async def stream_audio(url: str, api_key: str, rtf: float):
@@ -102,9 +144,11 @@ async def stream_audio(url: str, api_key: str, rtf: float):
     async with websockets.connect(url, additional_headers=headers) as websocket:
         send_task = asyncio.create_task(send_messages(websocket, rtf))
         receive_task = asyncio.create_task(receive_messages(websocket))
-        _, transcript = await asyncio.gather(send_task, receive_task)
-
-    return transcript
+        try:
+            _, transcript = await asyncio.gather(send_task, receive_task)
+            return transcript
+        finally:
+            await asyncio.shield(_shutdown_session(websocket, send_task, receive_task))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,10 @@ paths with weight-only quantization and simple performance logging.
 
 | File | Purpose |
 | --- | --- |
+| `scripts/quant_bench.py` | Unified CLI with `stt` and `tts` subcommands that dispatch to the CUDA and MLX benchmarks. |
+| `quant_bench/` | Library utilities shared by the CLIs (model loading, metrics helpers, and JSON/CSV export). |
+| `stt_bnb_quant_bench.py` | Backwards-compatible wrapper that forwards to the new STT benchmark helpers. |
+| `tts_mlx_quant_bench.py` | Backwards-compatible wrapper that forwards to the new TTS benchmark helpers. |
 | `stt_bnb_quant_bench.py` | Loads the Transformers STT model with bitsandbytes quantization (4-bit or 8-bit) on CUDA and reports load time, VRAM peaks, and per-file RTF. |
 | `tts_mlx_quant_bench.py` | Wraps Kyutai's `scripts/tts_mlx.py` with the MLX quantization flags and measures wall time, audio duration, RTF, and peak RSS on Apple Silicon. |
 | `setup_quant_env.sh` | Convenience installer for the Python dependencies needed by the two scripts. |

@@ -26,4 +26,4 @@ fi
   sounddevice \
   psutil
 
-echo "Dependencies installed. Run scripts/quant_bench.py stt|tts for the unified benchmarks."
+echo "Dependencies installed. Use stt_bnb_quant_bench.py for CUDA STT and tts_mlx_quant_bench.py for MLX TTS." 

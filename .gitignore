@@ -194,4 +194,3 @@ cython_debug/
 .cursorindexingignore
 out*.wav
 assets/fp16/stt-1b-en_fr-candle.fp16.safetensors
-assets/fp16/stt-1b-en_fr-candle.fp16.safetensors:Zone.Identifier

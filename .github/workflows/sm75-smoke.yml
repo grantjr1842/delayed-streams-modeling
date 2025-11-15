@@ -1,0 +1,34 @@
+name: SM75 CUDA Smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sm75-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile helper scripts
+        run: |
+          python -m py_compile \
+            scripts/check_gpu_capability.py \
+            scripts/prep_sm75_assets.py \
+            scripts/run_sm75_smoke_test.py
+
+      - name: Dry-run SM75 asset prep
+        run: python scripts/prep_sm75_assets.py --simulate sm75 --dry-run
+
+      - name: Simulated moshi-server smoke
+        run: python scripts/run_sm75_smoke_test.py --simulate-success --config configs/config-stt-en_fr-lowram-sm75.toml

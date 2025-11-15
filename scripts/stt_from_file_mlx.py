@@ -49,8 +49,6 @@ if __name__ == "__main__":
     model.set_dtype(mx.bfloat16)
     if moshi_weights.endswith(".q4.safetensors"):
         nn.quantize(model, bits=4, group_size=32)
-    elif moshi_weights.endswith(".q8.safetensors"):
-        nn.quantize(model, bits=8, group_size=64)
 
     print(f"loading model weights from {moshi_weights}")
     if args.hf_repo.endswith("-candle"):

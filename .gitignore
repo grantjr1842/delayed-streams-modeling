@@ -196,7 +196,7 @@ out*.wav
 assets/fp16/stt-1b-en_fr-candle.fp16.safetensors
 
 # Logs folders
-logs/*
+logs/
 
 # Assets folder
-assets/*
+assets/

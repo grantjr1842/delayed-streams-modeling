@@ -1,0 +1,46 @@
+# Plan
+
+-### 1. Q8 STT Server Setup · Branch: feat/q8-server-setup
+- [x] Acquire quantized model assets locally
+  - [x] Download `model.q8.gguf` into `$HOME/tmp/moshiko_rs_301e30bf@120/`
+  - [x] Download `tokenizer_spm_32k_3.model` and `tokenizer-e351c8d8-checkpoint125.safetensors`
+  - [x] Confirm the downloads and required dirs exist
+- [x] Introduce a q8 server config that points to the local assets
+  - [x] Mirror the existing STT config structure while customizing paths and ports
+  - [x] Set the additional q8-specific settings (`instance_name`, `mimi_num_codebooks`, `addr`, `port`, etc.)
+- [x] Validate the new config by starting the server with `TOKIO_WORKER_THREADS=1 moshi-server worker --cpu --config configs/config-stt-en_fr-q8.toml --addr 0.0.0.0 --port 8998`
+  - [x] Resolve the `HeaderTooLarge` failure emitted while opening `model.q8.gguf` (moshi-server now loads gguf via quantized VarBuilder)
+-### 2. Keep Q8 worker on CUDA · Branch: feat/000-q8-gpu-cuda
+- [x] Observe the q8 config on CUDA to see why the quantized worker drops back to the CPU
+  - [x] Run `TOKIO_WORKER_THREADS=1 moshi-server worker --config configs/config-stt-en_fr-q8.toml --addr 0.0.0.0 --port 8998` without `--cpu` and note the device selection (hit CUDA OOM)
+- [x] Reduce the config’s GPU footprint so the quantized worker can stay on CUDA
+  - [x] Trim `batch_size` / worker-thread settings until the model fits comfortably on a CUDA device
+  - [x] Add a short note to `README.md` explaining the tuned values and the verified command
+  - [x] Add a low-VRAM config that points at `kyutai/stt-1b-en_fr-candle` so 8 GiB cards can stay on CUDA
+- [x] Relocate the q8 assets inside the repository workspace
+  - [x] Move `model.q8.gguf`, `tokenizer_spm_32k_3.model`, and `tokenizer-e351c8d8-checkpoint125.safetensors` into `assets/q8/`
+  - [x] Update `configs/config-stt-en_fr-q8.toml` / `README.md` to reference the repo-local paths for the quantized model and tokenizers
+- [ ] Re-validate the tuned config and prove the worker stays on CUDA (blocked by CUDA OOM on this GPU)
+  - [x] Capture the confirmation command output in the change summary (DriverError(CUDA_ERROR_OUT_OF_MEMORY, "out of memory"))
+- [ ] Validate the low-VRAM config on this GPU (fails on Ampere requirement)
+  - [x] Run `TOKIO_WORKER_THREADS=1 moshi-server worker --config configs/config-stt-en_fr-lowram.toml --addr 0.0.0.0 --port 8999` and note the error (`DriverError(CUDA_ERROR_NOT_FOUND, "named symbol not found")`)
+  - [x] Record that the current GPU fails with `DriverError(CUDA_ERROR_NOT_FOUND, "named symbol not found")` before the worker can stay on CUDA
+  - [x] Add an fp16 conversion path + SM75 config so pre-Ampere GPUs can still run the Candle worker once they preprocess the checkpoint locally
+### 3. Friendly log formatting · Branch: feat/123-log-format
+- [x] Implement a dedicated formatter that strips ANSI junk, normalizes file/target metadata, and emits timestamps in the operator’s local timezone.
+  - [x] Detect the current timezone via `datetime.now().astimezone()` so logs match the operator’s locale (EST for the current machine).
+- [x] Run the formatter on `logs/moshi-logs/log.foo.2025-11-15` to prove the new layout and store the friendly output.
+  - [x] Capture a sample of the rewritten log and describe the fields so future consumers know what to expect.
+- [x] Document the formatter’s usage (new script entry or README note) so maintainers can keep future Moshi logs readable.
+- [x] Switch log timestamps to 12-hour format so operators see AM/PM times that match the IDE’s display.
+- [x] Streamline the log pipeline so raw Moshi logs land in `logs/moshi-logs/raw/` and a watcher keeps the published logs formatted automatically.
+  - [x] Update all configs to target the raw directory and ship a watcher script that mirrors fresh entries into `logs/moshi-logs/` with the friendly format.
+  - [x] Document how to run the watcher (and require it alongside `moshi-server`) so future logs stay readable without manual fixes.
+### 4. Log pipeline performance · Branch: perf/log-pipeline
+- [x] Review the current log formatter/watcher and record the bottlenecks that incremental tailing and change detection would resolve.
+  - [x] Capture how often files are rewritten today and why avoiding full rewrites should cut both CPU and disk churn.
+- [x] Rework `scripts/watch_moshi_logs.py` so it tracks offsets and only reformats appended data while keeping `--once`, `--interval`, and `--quiet` intact.
+  - [x] Handle truncated files and partial final lines without corrupting the friendly log output.
+- [x] Update `scripts/format_moshi_log.py` to skip writing when the sanitized output already matches the destination file.
+- [x] Refresh `README.md` to explain the new watcher behavior (incremental mirroring, what directories to run it from, and why it’s more lightweight).
+- [x] Verify the refactored pipeline by running `python scripts/watch_moshi_logs.py --once` on a test log and confirming only new entries are appended.

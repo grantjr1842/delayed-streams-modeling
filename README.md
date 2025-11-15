@@ -307,6 +307,11 @@ and just prefix the command above with `uvx --with moshi-mlx`.
 
 Checkout the [Frequently Asked Questions](FAQ.md) section before opening an issue.
 
+## STT config validation notes
+
+- `TOKIO_WORKER_THREADS=1 moshi-server worker --config configs/config-stt-en_fr-q8.toml --addr 0.0.0.0 --port 8998` currently aborts with `DriverError(CUDA_ERROR_OUT_OF_MEMORY, "out of memory")` before the quantized worker can stabilise on CUDA on this machine, so the confirmation that the worker stays on CUDA remains pending; the raw failure log is in `logs/moshi-logs/raw/log.foo.2025-11-15`.
+- `TOKIO_WORKER_THREADS=1 moshi-server worker --config configs/config-stt-en_fr-lowram.toml --addr 0.0.0.0 --port 8999` fails with `DriverError(CUDA_ERROR_NOT_FOUND, "named symbol not found")` because this GPU apparently lacks the Ampere kernels Candle needs, so keep pointing `configs/config-stt-en_fr-lowram-sm75.toml` (or the fp16 path) at the converted checkpoint after you preprocess the model locally; the same raw log file also captures that failure.
+
 ## License
 
 The present code is provided under the MIT license for the Python parts, and Apache license for the Rust backend.

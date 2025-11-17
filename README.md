@@ -340,6 +340,17 @@ uv run --with torch scripts/check_gpu_capability.py
 3. Run `python scripts/format_moshi_log.py logs/moshi-logs/raw/log.config-stt-en_fr-lowram-sm75.2025-11-15` (or point the helper at your own raw trace) to generate `logs/moshi-logs/log.config-stt-en_fr-lowram-sm75.2025-11-15`.
    The formatter strips ANSI clutter, normalizes stray control characters, and renders UTC timestamps as local 12-hour times so the friendly log (along with the raw trace in `logs/moshi-logs/raw/log.foo.2025-11-15`) documents the `CUDA_ERROR_NOT_FOUND` failure path that occurs when the converted checkpoint is unavailable, helping you verify conversion is required before the worker can stay on CUDA.
 4. (Optional) Run `scripts/run_sm75_smoke_test.py` to launch (or simulate) `moshi-server worker --config configs/config-stt-en_fr-lowram-sm75.toml` and confirm CUDA stays up. CI exercises this via `--simulate-success`, while operators on real GPUs can omit the flag to test their runtime.
+5. (Optional) Publish your sanitized logs to S3 so collaborators can inspect them without copying files manually:
+
+```bash
+uv run --with boto3 scripts/publish_logs_to_s3.py \
+  --bucket my-moshi-logs \
+  --prefix "operators/$USER" \
+  --source logs/moshi-logs \
+  --acl private
+```
+
+This helper uploads the friendly logs by default (skipping `logs/moshi-logs/raw` unless `--include-raw` is set), tracks file hashes via S3 object metadata to avoid redundant uploads, and supports custom AWS profiles/regions/endpoints for environments that use S3-compatible storage.
 
 ## License
 

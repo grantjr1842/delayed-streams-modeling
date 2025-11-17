@@ -17,15 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-import numpy as np
-import soundfile as sf
 import torch
-from scipy import signal
 from transformers import (
     BitsAndBytesConfig,
     KyutaiSpeechToTextForConditionalGeneration,
     KyutaiSpeechToTextProcessor,
 )
+
+from quant_bench.audio_loader import AudioLoader
 
 
 TARGET_SAMPLE_RATE = 24_000
@@ -80,13 +79,17 @@ class InferenceMetrics:
 
 
 class CudaMemoryMonitor:
-    def __init__(self) -> None:
+    def __init__(self, clear_cache: bool = True) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required for this benchmark.")
+        self._clear_cache = clear_cache
+        self.start_alloc = 0
+        self.start_reserved = 0
 
     def __enter__(self):
         torch.cuda.reset_peak_memory_stats()
-        torch.cuda.empty_cache()
+        if self._clear_cache:
+            torch.cuda.empty_cache()
         self.start_alloc = torch.cuda.memory_allocated()
         self.start_reserved = torch.cuda.memory_reserved()
         return self
@@ -120,26 +123,6 @@ class Arguments:
     audio_files: List[Path]
     csv_out: Optional[Path]
     config: Config
-
-
-class AudioLoader:
-    def __init__(self, target_sample_rate: int = TARGET_SAMPLE_RATE) -> None:
-        self.target_sample_rate = target_sample_rate
-
-    def load(self, path: Path) -> tuple[np.ndarray, float]:
-        data, sample_rate = sf.read(path)
-        if data.ndim == 2:
-            data = np.mean(data, axis=1)
-        if sample_rate != self.target_sample_rate:
-            data = self._resample(data, sample_rate)
-        duration = float(len(data) / self.target_sample_rate)
-        return data.astype(np.float32), duration
-
-    def _resample(self, data: np.ndarray, sample_rate: int) -> np.ndarray:
-        gcd = math.gcd(sample_rate, self.target_sample_rate)
-        up = self.target_sample_rate // gcd
-        down = sample_rate // gcd
-        return signal.resample_poly(data, up, down)
 
 
 def parse_args() -> Arguments:
@@ -286,16 +269,19 @@ def transcribe(
     for path in audio_paths:
         audio, duration = audio_loader.load(path)
         inputs = processor(audio, sampling_rate=TARGET_SAMPLE_RATE, return_tensors="pt")
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        inputs = inputs.to(model.device)
 
         torch.cuda.synchronize()
         preprocess_done = time.perf_counter()
-        with CudaMemoryMonitor() as monitor:
-            gen_start = time.perf_counter()
+        with CudaMemoryMonitor(clear_cache=False) as monitor:
+            gen_start_event = torch.cuda.Event(enable_timing=True)
+            gen_end_event = torch.cuda.Event(enable_timing=True)
+            gen_start_event.record()
             with torch.inference_mode():
                 generated = model.generate(**inputs, **generation_kwargs)
-            torch.cuda.synchronize()
-            gen_time = time.perf_counter() - gen_start
+            gen_end_event.record()
+            gen_end_event.synchronize()
+            gen_time = gen_start_event.elapsed_time(gen_end_event) / 1000
             peak_alloc, peak_reserved = monitor.peak
         total_time = time.perf_counter() - preprocess_done
 
@@ -367,6 +353,7 @@ def write_csv(path: Path, load_metrics: LoadMetrics, inference_metrics: List[Inf
 def main() -> None:
     args = parse_args()
     audio_loader = AudioLoader()
+    audio_loader.warmup(args.audio_files)
 
     processor, model, load_metrics = load_model(args.config)
     print("Model load metrics:")

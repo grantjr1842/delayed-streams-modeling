@@ -9,15 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
-import numpy as np
-import soundfile as sf
 import torch
-from scipy import signal
 from transformers import (
     BitsAndBytesConfig,
     KyutaiSpeechToTextForConditionalGeneration,
     KyutaiSpeechToTextProcessor,
 )
+
+from .audio_loader import AudioLoader
 
 TARGET_SAMPLE_RATE = 24_000
 
@@ -141,26 +140,6 @@ class CudaMemoryMonitor:
         )
 
 
-class AudioLoader:
-    def __init__(self, target_sample_rate: int = TARGET_SAMPLE_RATE) -> None:
-        self.target_sample_rate = target_sample_rate
-
-    def load(self, path: Path) -> tuple[np.ndarray, float]:
-        data, sample_rate = sf.read(path)
-        if data.ndim == 2:
-            data = np.mean(data, axis=1)
-        if sample_rate != self.target_sample_rate:
-            data = self._resample(data, sample_rate)
-        duration = float(len(data) / self.target_sample_rate)
-        return data.astype(np.float32), duration
-
-    def _resample(self, data: np.ndarray, sample_rate: int) -> np.ndarray:
-        gcd = math.gcd(sample_rate, self.target_sample_rate)
-        up = self.target_sample_rate // gcd
-        down = sample_rate // gcd
-        return signal.resample_poly(data, up, down)
-
-
 class STTBenchmark:
     def __init__(self, config: STTConfig) -> None:
         self.config = config
@@ -237,6 +216,7 @@ class STTBenchmark:
         json_out: Optional[Path] = None,
     ) -> tuple[STTLoadMetrics, list[STTInferenceMetrics]]:
         processor, model, load_metrics = self._load_model()
+        self.audio_loader.warmup(audio_files)
         metrics: list[STTInferenceMetrics] = []
         csv_rows: list[dict[str, object]] = []
 

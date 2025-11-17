@@ -83,7 +83,8 @@ async def send_messages(websocket, rtf: float):
             for _ in range(35):
                 await send_audio(SILENCE_SECOND)
         except asyncio.CancelledError:
-            # Propagate cancellation after ensuring the marker/silence is flushed.
+            # Allow a later shielded retry to flush the trailer.
+            stream_closed = False
             raise
         except websockets.ConnectionClosed:
             # Connection already closed; nothing else to send.
@@ -108,7 +109,7 @@ async def send_messages(websocket, rtf: float):
         await send_stream_end()
     except asyncio.CancelledError:
         await asyncio.shield(send_stream_end())
-        raise
+        return
     finally:
         await asyncio.shield(send_stream_end())
 
@@ -144,11 +145,36 @@ async def stream_audio(url: str, api_key: str, rtf: float):
     async with websockets.connect(url, additional_headers=headers) as websocket:
         send_task = asyncio.create_task(send_messages(websocket, rtf))
         receive_task = asyncio.create_task(receive_messages(websocket))
+        cancelled = False
+        gather_future = asyncio.gather(
+            send_task,
+            receive_task,
+            return_exceptions=True,
+        )
         try:
-            _, transcript = await asyncio.gather(send_task, receive_task)
-            return transcript
+            send_result, transcript_result = await asyncio.shield(gather_future)
+        except asyncio.CancelledError:
+            cancelled = True
+            send_result, transcript_result = await asyncio.shield(gather_future)
         finally:
-            await asyncio.shield(_shutdown_session(websocket, send_task, receive_task))
+            await asyncio.shield(
+                _shutdown_session(websocket, send_task, receive_task)
+            )
+
+        if isinstance(send_result, asyncio.CancelledError):
+            cancelled = True
+        elif isinstance(send_result, Exception):
+            raise send_result
+
+        if isinstance(transcript_result, asyncio.CancelledError):
+            cancelled = True
+        elif isinstance(transcript_result, Exception):
+            raise transcript_result
+
+        if cancelled:
+            raise asyncio.CancelledError
+
+        return transcript_result
 
 
 if __name__ == "__main__":

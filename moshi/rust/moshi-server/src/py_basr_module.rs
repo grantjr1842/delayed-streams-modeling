@@ -120,7 +120,7 @@ type Channels = Arc<Mutex<Vec<Option<Channel>>>>;
 
 struct Inner {
     channels: Channels,
-    app: PyObject,
+    app: Py<PyAny>,
     text_tokenizer: Arc<sentencepiece::SentencePieceProcessor>,
     asr_delay_in_tokens: usize,
 }
@@ -222,13 +222,13 @@ impl Inner {
             }
             let mut markers = BinaryHeap::new();
             let mask = numpy::ndarray::Array1::<u8>::zeros([batch_size]);
-            let mask = Python::with_gil(|py| mask.to_pyarray(py).unbind());
+            let mask = Python::attach(|py| mask.to_pyarray(py).unbind());
             let tokens = numpy::ndarray::Array1::<u32>::zeros([batch_size]);
-            let tokens = Python::with_gil(|py| tokens.to_pyarray(py).unbind());
+            let tokens = Python::attach(|py| tokens.to_pyarray(py).unbind());
             let extra_heads = numpy::ndarray::Array2::<f32>::zeros((batch_size, 4));
-            let extra_heads = Python::with_gil(|py| extra_heads.to_pyarray(py).unbind());
+            let extra_heads = Python::attach(|py| extra_heads.to_pyarray(py).unbind());
             let batch_pcm_py = numpy::ndarray::Array1::<f32>::zeros(batch_size * FRAME_SIZE);
-            let batch_pcm_py = Python::with_gil(|py| batch_pcm_py.to_pyarray(py).unbind());
+            let batch_pcm_py = Python::attach(|py| batch_pcm_py.to_pyarray(py).unbind());
             let mut current_word: Vec<Vec<u32>> = vec![Vec::new(); batch_size];
             let mut words_start_step = vec![0_usize; batch_size];
             let mut channel_ids = vec![None; batch_size];
@@ -240,7 +240,7 @@ impl Inner {
                 // the data back to the user.
                 let start_time = std::time::Instant::now();
                 let mut asr_msgs: Vec<AsrMsg> = vec![];
-                Python::with_gil(|py| -> Result<()> {
+                Python::attach(|py| -> Result<()> {
                     let mut batch_pcm = batch_pcm_py.bind(py).readwrite();
                     let batch_pcm = batch_pcm
                         .as_slice_mut()
@@ -439,7 +439,7 @@ impl M {
                 (script, script_name)
             }
         };
-        let app = Python::with_gil(|py| -> Result<_> {
+        let app = Python::attach(|py| -> Result<_> {
             let py_config = pyo3::types::PyDict::new(py);
             if let Some(cfg) = config.py.as_ref() {
                 for (key, value) in cfg.iter() {

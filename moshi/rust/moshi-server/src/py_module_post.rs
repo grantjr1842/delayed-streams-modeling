@@ -17,7 +17,7 @@ struct ModelQuery {
 }
 
 pub struct Inner {
-    app: PyObject,
+    app: Py<PyAny>,
     in_rx: std::sync::mpsc::Receiver<ModelQuery>,
 }
 
@@ -50,10 +50,10 @@ impl Inner {
 
     fn handle_query(&self, req: ModelQuery) -> Result<()> {
         let start_time = std::time::Instant::now();
-        let emb = Python::with_gil(|py| -> Result<_> {
+        let emb = Python::attach(|py| -> Result<_> {
             let pcm = numpy::PyArray1::from_vec(py, req.pcm);
             let emb = self.app.call_method1(py, "run_one", (pcm,)).map_err(VerbosePyErr::from)?;
-            let emb = match emb.downcast_bound::<numpy::PyArrayDyn<f32>>(py) {
+            let emb = match emb.cast_bound::<numpy::PyArrayDyn<f32>>(py) {
                 Ok(emb) => emb,
                 Err(_) => {
                     anyhow::bail!("failed to downcast to PyArrayDyn<f32>")
@@ -93,7 +93,7 @@ impl M {
                 (script, script_name)
             }
         };
-        let app = Python::with_gil(|py| -> Result<_> {
+        let app = Python::attach(|py| -> Result<_> {
             let py_config = pyo3::types::PyDict::new(py);
             if let Some(cfg) = config.py.as_ref() {
                 for (key, value) in cfg.iter() {

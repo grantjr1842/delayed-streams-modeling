@@ -52,7 +52,7 @@ impl std::error::Error for VerbosePyErr {}
 
 impl std::fmt::Display for VerbosePyErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let traceback = match get_traceback(py, &self.err) {
                 Err(_) => "no traceback".to_string(),
                 Ok(traceback) => traceback,
@@ -163,8 +163,8 @@ impl Drop for Channel {
 }
 
 pub fn init() -> PyResult<()> {
-    pyo3::prepare_freethreaded_python();
-    Python::with_gil(|py| -> PyResult<()> {
+    Python::initialize();
+    Python::attach(|py| -> PyResult<()> {
         let signal = py.import("signal")?;
         // Set SIGINT to have the default action rather than triggering a Python exception
         signal.getattr("signal")?.call1((signal.getattr("SIGINT")?, signal.getattr("SIG_DFL")?))?;
@@ -177,7 +177,7 @@ type Channels = Arc<Mutex<Vec<Option<Channel>>>>;
 
 struct Inner {
     channels: Channels,
-    app: PyObject,
+    app: Py<PyAny>,
 }
 
 enum Voice {
@@ -271,11 +271,11 @@ impl Inner {
             // Maybe the model loop could just always hold the gil?
             tracing::info!("starting-up the py model loop");
             let pcm_data = numpy::ndarray::Array2::<f32>::zeros([batch_size, FRAME_SIZE]);
-            let pcm_data = Python::with_gil(|py| pcm_data.to_pyarray(py).unbind());
+            let pcm_data = Python::attach(|py| pcm_data.to_pyarray(py).unbind());
             let mask = numpy::ndarray::Array1::<u8>::zeros([batch_size]);
-            let mask = Python::with_gil(|py| mask.to_pyarray(py).unbind());
+            let mask = Python::attach(|py| mask.to_pyarray(py).unbind());
             let tokens = numpy::ndarray::Array2::<i32>::zeros([batch_size, 33]);
-            let tokens = Python::with_gil(|py| tokens.to_pyarray(py).unbind());
+            let tokens = Python::attach(|py| tokens.to_pyarray(py).unbind());
 
             for step_idx in 0.. {
                 // We store the channel ids here to check that they have not changed when sending
@@ -286,7 +286,7 @@ impl Inner {
                     continue;
                 }
                 let start_time = std::time::Instant::now();
-                Python::with_gil(|py| -> Result<()> {
+                Python::attach(|py| -> Result<()> {
                     self.app
                         .call_method1(py, "step", (in_data, &pcm_data, &mask, &tokens))
                         .map_err(VerbosePyErr::from)?;
@@ -416,7 +416,7 @@ impl M {
                 (script, script_name)
             }
         };
-        let app = Python::with_gil(|py| -> Result<_> {
+        let app = Python::attach(|py| -> Result<_> {
             let py_config = pyo3::types::PyDict::new(py);
             if let Some(cfg) = config.py.as_ref() {
                 for (key, value) in cfg.iter() {

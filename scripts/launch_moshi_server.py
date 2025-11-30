@@ -95,7 +95,14 @@ def main():
     temp_config_path = None
     cmd_args = sys.argv[1:]
 
-    if vram_mb:
+    try:
+        # Find index in the actual arguments list we will pass
+        config_arg_idx = cmd_args.index("--config")
+    except ValueError:
+         # Should not happen given checks above, but safe fallback
+        config_arg_idx = -1
+
+    if vram_mb and config_arg_idx != -1:
         new_config_data = adjust_config(config_path, vram_mb)
         if new_config_data:
             # Create temp file
@@ -107,8 +114,11 @@ def main():
             
             cleanup_temp = True
             
-            # Replace config path in args
-            cmd_args[config_idx + 1] = temp_config_path
+            # Replace config path in args (it's the element AFTER --config)
+            # config_arg_idx is index of "--config"
+            # config_arg_idx + 1 is index of the path
+            if config_arg_idx + 1 < len(cmd_args):
+                cmd_args[config_arg_idx + 1] = temp_config_path
 
     try:
         # print(f"Launching: moshi-server {' '.join(cmd_args)}", file=sys.stderr)

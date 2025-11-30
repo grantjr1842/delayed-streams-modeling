@@ -128,6 +128,8 @@ repository.
 cargo install --features cuda moshi-server
 ```
 
+For detailed compilation instructions and troubleshooting for 8GB VRAM cards (e.g. RTX 2070), see [docs/MOSHI_SERVER_SETUP.md](docs/MOSHI_SERVER_SETUP.md).
+
 Then the server can be started via the following command using the config file
 from this repository.
 For `kyutai/stt-1b-en_fr`, use `configs/config-stt-en_fr.hf.toml`,

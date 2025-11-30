@@ -241,9 +241,15 @@ impl Mimi {
     }
 }
 
+use std::collections::HashMap;
+
 pub fn load(model_file: &str, num_codebooks: Option<usize>, dev: &Device) -> Result<Mimi> {
-    let vb =
-        unsafe { candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, dev)? };
+    let tensors = candle::safetensors::load(model_file, dev)?;
+    let tensors = tensors
+        .into_iter()
+        .map(|(k, v)| Ok((k, v.to_dtype(DType::F32)?)))
+        .collect::<Result<HashMap<_, _>>>()?;
+    let vb = VarBuilder::from_tensors(tensors, DType::F32, dev);
     let cfg = Config::v0_1(num_codebooks);
     let mimi = Mimi::new(cfg, vb)?;
     Ok(mimi)
@@ -255,8 +261,12 @@ pub fn load_b(
     num_codebooks: Option<usize>,
     dev: &Device,
 ) -> Result<Mimi> {
-    let vb =
-        unsafe { candle_nn::VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, dev)? };
+    let tensors = candle::safetensors::load(model_file, dev)?;
+    let tensors = tensors
+        .into_iter()
+        .map(|(k, v)| Ok((k, v.to_dtype(DType::F32)?)))
+        .collect::<Result<HashMap<_, _>>>()?;
+    let vb = VarBuilder::from_tensors(tensors, DType::F32, dev);
     let cfg = Config::v0_1(num_codebooks);
     let mimi = Mimi::new_(batch_size, cfg, vb)?;
     Ok(mimi)

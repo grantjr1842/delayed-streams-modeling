@@ -23,11 +23,8 @@ impl MaybeQuantizedWeight {
 
 pub fn matmul_dtype(device: &candle::Device) -> DType {
     // Dtype used for intermediate matmul in attention during quantized execution
-    if device.is_cuda() {
-        DType::BF16
-    } else {
-        DType::F32
-    }
+    // Force F32 for now as RTX 2070 (Turing) doesn't support BF16 and causes missing symbol errors.
+    DType::F32
 }
 
 #[derive(Clone)]
@@ -47,7 +44,10 @@ impl MaybeQuantizedVarBuilder<'_> {
 
     pub fn get<S: Into<Shape>>(&self, s: S, path: &str) -> Result<MaybeQuantizedWeight> {
         let w = match self {
-            Self::Real(weights) => MaybeQuantizedWeight::Real(weights.get(s, path)?),
+            Self::Real(weights) => {
+                // Preserve VarBuilder's dtype; caller sets appropriate dtype (F16/F32) based on GPU capability
+                MaybeQuantizedWeight::Real(weights.get(s, path)?)
+            }
             Self::Quantized(weights) => MaybeQuantizedWeight::Quantized(weights.get(s, path)?),
         };
         Ok(w)
@@ -58,13 +58,15 @@ impl MaybeQuantizedVarBuilder<'_> {
             Self::Real(weights) => MaybeQuantizedWeight::Real(weights.get(s, path)?),
             Self::Quantized(weights) => MaybeQuantizedWeight::Quantized(weights.get(s, path)?),
         };
-        w.to_tensor(self.device())
+        // Preserve VarBuilder's dtype instead of forcing F32
+        w.to_tensor(self.device())?.to_dtype(self.dtype())
     }
 
     pub fn get_unquantized<S: Into<Shape>>(&self, s: S, path: &str) -> Result<Tensor> {
         match self {
+            // Preserve VarBuilder's dtype instead of forcing F32
             Self::Real(weights) => weights.get(s, path),
-            Self::Quantized(weights) => weights.get(s, path)?.dequantize(weights.device()),
+            Self::Quantized(weights) => weights.get(s, path)?.dequantize(weights.device())?.to_dtype(self.dtype()),
         }
     }
 

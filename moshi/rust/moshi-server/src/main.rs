@@ -541,37 +541,111 @@ async fn main_() -> Result<()> {
 
             let mut config = Config::load(&args.config)?;
 
-            // Auto-adjust batch size based on available VRAM
-            if let Ok(vram) = utils::get_available_vram() {
-                let vram_mb = vram / 1024 / 1024;
-                tracing::info!("Available VRAM: {} MB", vram_mb);
-
-                // Heuristic: Assume ~400MB per batch item for safety, or use env var.
-                let memory_per_batch_item = std::env::var("MOSHI_MEMORY_PER_BATCH_MB")
-                    .ok()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .map(|v| v * 1024 * 1024)
-                    .unwrap_or(400 * 1024 * 1024); 
-                let max_safe_batch_size = (vram / memory_per_batch_item) as usize;
-
-                for (name, module_cfg) in config.modules.iter_mut() {
-                    if let ModuleConfig::BatchedAsr { batch_size, .. } = module_cfg {
-                        if *batch_size > max_safe_batch_size {
-                             tracing::warn!("Batch size {} for module {} is likely too large for available VRAM ({} MB). Adjusting to {}.", 
-                                 batch_size, name, vram_mb, max_safe_batch_size);
-                             *batch_size = max_safe_batch_size.max(1);
-                        }
-                    }
-                }
-            } else {
-                tracing::warn!("Could not detect VRAM availability. Using configured batch sizes.");
-            }
-
+            // Initialize logging first so GPU detection logs are visible
             if std::env::var("RUST_LOG").is_err() {
                 std::env::set_var("RUST_LOG", format!("{},hyper=info,mio=info", args.log_level))
             }
             let _guard =
                 tracing_init(&config.log_dir, &config.instance_name, &args.log_level, args.silent)?;
+
+            // Auto-detect GPU capabilities and adjust configuration
+            if let Ok(gpu_info) = utils::get_gpu_info() {
+                // Extract model info from the first LM-bearing module for logging
+                let model_info = config.modules.values().find_map(|m| match m {
+                    ModuleConfig::Lm { config: c, .. } => Some(utils::ModelInfo::from_lm_config(c)),
+                    ModuleConfig::Asr { config: c, .. } => Some(utils::ModelInfo::from_asr_config(c)),
+                    ModuleConfig::BatchedAsr { config: c, .. } => Some(utils::ModelInfo::from_asr_config(c)),
+                    ModuleConfig::Tts { config: c, .. } => Some(utils::ModelInfo::from_tts_config(c)),
+                    _ => None,
+                });
+                
+                // Log combined GPU and model summary
+                gpu_info.log_combined_summary(model_info.as_ref());
+
+                // Get recommended dtype based on GPU compute capability
+                let auto_dtype = gpu_info.recommended_dtype();
+                
+                // Read configuration from environment or use defaults
+                let model_params_billions: f64 = std::env::var("MOSHI_MODEL_PARAMS_BILLIONS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(utils::DEFAULT_MODEL_PARAMS_BILLIONS);
+                
+                let per_batch_item_mb: u64 = std::env::var("MOSHI_PER_BATCH_ITEM_MB")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(utils::DEFAULT_PER_BATCH_ITEM_MB);
+                
+                // Calculate batch size with detailed breakdown
+                let batch_calc = gpu_info.calculate_batch_size(
+                    model_params_billions,
+                    per_batch_item_mb,
+                );
+                batch_calc.log_breakdown();
+                
+                let max_safe_batch_size = batch_calc.recommended_batch_size;
+
+                for (name, module_cfg) in config.modules.iter_mut() {
+                    match module_cfg {
+                        ModuleConfig::BatchedAsr { batch_size, config: asr_config, .. } => {
+                            // Auto-set dtype_override if not specified
+                            if asr_config.dtype_override.is_none() {
+                                tracing::info!(
+                                    module = name,
+                                    dtype = auto_dtype,
+                                    "Auto-setting dtype_override for BatchedAsr"
+                                );
+                                asr_config.dtype_override = Some(auto_dtype.to_string());
+                            }
+                            
+                            // Adjust batch size if too large
+                            if *batch_size > max_safe_batch_size {
+                                tracing::warn!(
+                                    module = name,
+                                    configured = *batch_size,
+                                    adjusted = max_safe_batch_size,
+                                    "Reducing batch size due to VRAM constraints"
+                                );
+                                *batch_size = max_safe_batch_size.max(1);
+                            }
+                        }
+                        ModuleConfig::Asr { config: asr_config, .. } => {
+                            if asr_config.dtype_override.is_none() {
+                                tracing::info!(
+                                    module = name,
+                                    dtype = auto_dtype,
+                                    "Auto-setting dtype_override for Asr"
+                                );
+                                asr_config.dtype_override = Some(auto_dtype.to_string());
+                            }
+                        }
+                        ModuleConfig::Tts { config: tts_config, .. } => {
+                            if tts_config.dtype_override.is_none() {
+                                tracing::info!(
+                                    module = name,
+                                    dtype = auto_dtype,
+                                    "Auto-setting dtype_override for Tts"
+                                );
+                                tts_config.dtype_override = Some(auto_dtype.to_string());
+                            }
+                        }
+                        ModuleConfig::Lm { config: lm_config, .. } => {
+                            if lm_config.dtype_override.is_none() {
+                                tracing::info!(
+                                    module = name,
+                                    dtype = auto_dtype,
+                                    "Auto-setting dtype_override for Lm"
+                                );
+                                lm_config.dtype_override = Some(auto_dtype.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                tracing::warn!("Could not detect GPU capabilities. Using configured values.");
+            }
+
             let num_workers = tokio::runtime::Handle::current().metrics().num_workers();
             tracing::info!(num_workers, "starting worker");
 

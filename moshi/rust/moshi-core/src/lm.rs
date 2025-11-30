@@ -882,7 +882,6 @@ impl LmModel {
                 Tensor::zeros((1, 1, self.text_emb.hidden_size()?), self.dtype, device)?
             }
         };
-
         for (audio_emb, audio_ids) in self.audio_embs.iter().zip(audio_ids.iter()) {
             if let Some(audio_ids) = audio_ids {
                 let e = audio_ids.apply(audio_emb)?;

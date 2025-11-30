@@ -8,13 +8,13 @@ anyhow = "1.0"
 candle = { version = "0.9.1",  package = "candle-core" }
 candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
-clap = { version = "4.4.12", features = ["derive"] }
+clap = { version = "4.5.53", features = ["derive"] }
 hf-hub = "0.4.3"
 kaudio = "0.2.1"
-moshi = "0.6.1"
-sentencepiece = "0.11.3"
-serde = { version = "1.0.210", features = ["derive"] }
-serde_json = "1.0.115"
+moshi = "0.6.4"
+sentencepiece = "0.12.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 
 [features]
 default = []

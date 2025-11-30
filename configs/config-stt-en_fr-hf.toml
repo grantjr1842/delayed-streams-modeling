@@ -6,10 +6,19 @@ authorized_ids = ["public_token"]
 [modules.asr]
 path = "/api/asr-streaming"
 type = "BatchedAsr"
+# dtype_override is auto-detected based on GPU compute capability:
+#   - SM 8.0+ (Ampere, Ada, Hopper): uses "bf16"
+#   - SM 7.x and below (Turing, Volta): uses "f32"
+# Uncomment to override auto-detection:
+# dtype_override = "f32"
 lm_model_file = "hf://kyutai/stt-1b-en_fr-candle/model.safetensors"
 text_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/tokenizer_en_fr_audio_8000.model"
 audio_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/mimi-pytorch-e351c8d8@125.safetensors"
 asr_delay_in_tokens = 6
+# batch_size is auto-adjusted based on available VRAM.
+# Set a high value here; it will be reduced if VRAM is insufficient.
+# Env vars for tuning: MOSHI_MODEL_PARAMS_BILLIONS (default: 1.0)
+#                      MOSHI_MEMORY_OVERHEAD_FACTOR (default: 2.0)
 batch_size = 64
 conditioning_learnt_padding = true
 temperature = 0.0

@@ -6,13 +6,19 @@ authorized_ids = ["public_token"]
 [modules.asr]
 path = "/api/asr-streaming"
 type = "BatchedAsr"
+# Using pre-converted FP16 model for SM 7.5 (Turing) GPUs that lack native BF16.
+# F16 provides memory savings while avoiding the BF16 kernel issues.
+# Generated via: uv run --with torch,safetensors,huggingface_hub,numpy scripts/prep_sm75_assets.py
 lm_model_file = "assets/fp16/stt-1b-en_fr-candle.fp16.safetensors"
 text_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/tokenizer_en_fr_audio_8000.model"
 audio_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/mimi-pytorch-e351c8d8@125.safetensors"
 asr_delay_in_tokens = 6
-batch_size = 2
+# batch_size is auto-adjusted based on available VRAM; 64 is a safe upper bound.
+# Default model size is 1.0B. For stt-2.6b models, set MOSHI_MODEL_PARAMS_BILLIONS=2.6
+batch_size = 64
 conditioning_learnt_padding = true
 temperature = 0.0
+# Explicit F16 to match the pre-converted model weights.
 dtype_override = "f16"
 
 [modules.asr.model]

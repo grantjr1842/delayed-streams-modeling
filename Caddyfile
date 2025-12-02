@@ -62,7 +62,7 @@ stt.fullen.dev {
 	# 	- /metrics (GET - Prometheus metrics)
 	# 	- /* (Static files - client app)
 	reverse_proxy localhost:8080 {
-		# Explicit WebSocket header passthrough for reliable upgrades
+		# Explicit WebSocket header passthrough for reliable streaming
 		header_up Connection {http.request.header.Connection}
 		header_up Upgrade {http.request.header.Upgrade}
 	}

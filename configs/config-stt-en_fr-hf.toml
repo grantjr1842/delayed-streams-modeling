@@ -1,7 +1,8 @@
 static_dir = "./static/"
-log_dir = "$HOME/tmp/tts-logs"
-instance_name = "tts"
-authorized_ids = ["public_token"]
+log_dir = "logs/moshi-server-rust/stt"
+instance_name = "config-stt-en_fr-hf"
+# authorized_ids can be set here or via MOSHI_API_KEY environment variable (comma-separated)
+authorized_ids = []
 
 [modules.asr]
 path = "/api/asr-streaming"

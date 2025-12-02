@@ -1,7 +1,8 @@
 static_dir = "../client/dist"
-log_dir = "logs/moshi-logs/raw"
+log_dir = "logs/moshi-server-rust/stt"
 instance_name = "config-stt-en_fr-lowram-sm75"
-authorized_ids = ["public_token"]
+# authorized_ids can be set here or via MOSHI_API_KEY environment variable (comma-separated)
+authorized_ids = []
 
 [modules.asr]
 path = "/api/asr-streaming"
@@ -15,11 +16,11 @@ audio_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/mimi-pytorch-e351c8d8@12
 asr_delay_in_tokens = 6
 # batch_size is auto-adjusted based on available VRAM; 64 is a safe upper bound.
 # Default model size is 1.0B. For stt-2.6b models, set MOSHI_MODEL_PARAMS_BILLIONS=2.6
-batch_size = 64
+batch_size = 4
 conditioning_learnt_padding = true
 temperature = 0.0
 # Explicit F16 to match the pre-converted model weights.
-dtype_override = "f16"
+dtype_override = "f32"
 
 [modules.asr.model]
 audio_vocab_size = 2049

@@ -50,23 +50,6 @@ struct WorkerArgs {
     #[clap(long)]
     config: String,
 
-    #[clap(long)]
-    ssl_cert: Option<String>,
-
-    #[clap(long)]
-    ssl_key: Option<String>,
-
-    #[clap(long)]
-    domain: Option<String>,
-
-    #[clap(long)]
-    email: Option<String>,
-
-    #[clap(long)]
-    acme_cache: Option<String>,
-
-    #[clap(long)]
-    acme_staging: bool,
 
     #[clap(long)]
     silent: bool,
@@ -239,11 +222,6 @@ impl Config {
                     config.authorized_ids.insert(key.to_string());
                 }
             }
-        }
-
-        // Check if Better Auth JWT validation is configured
-        if std::env::var("BETTER_AUTH_SECRET").is_ok() {
-            tracing::info!("Better Auth JWT validation enabled (BETTER_AUTH_SECRET is set)");
         }
 
         for (_, c) in config.modules.iter_mut() {
@@ -532,10 +510,6 @@ async fn metrics(
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    // Explicitly install the default crypto provider (ring) for rustls.
-    // This prevents the "Could not automatically determine the process-level CryptoProvider" panic.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     // When an error bubbles up in the tokio main function, the whole program does not
     // seem to crash if some background tasks are still running.
     // This can lead to errors such as "port already in use" not being reported so we
@@ -585,6 +559,11 @@ async fn main_() -> Result<()> {
             }
             let _guard =
                 tracing_init(&config.log_dir, &config.instance_name, &args.log_level, args.silent)?;
+
+            // Log Better Auth status (after tracing is initialized)
+            if std::env::var("BETTER_AUTH_SECRET").is_ok() {
+                tracing::info!("Better Auth JWT validation enabled (BETTER_AUTH_SECRET is set)");
+            }
 
             // Auto-detect GPU capabilities and adjust configuration
             if let Ok(gpu_info) = utils::get_gpu_info() {
@@ -713,72 +692,15 @@ async fn main_() -> Result<()> {
                 args.port,
             ));
             tracing::info!("listening on {}", sock_addr);
-            if let (Some(cert), Some(key)) = (&args.ssl_cert, &args.ssl_key) {
-                use axum_server::tls_rustls::RustlsConfig;
-                tracing::info!("SSL enabled (Manual). Cert: {}, Key: {}", cert, key);
-                let config = RustlsConfig::from_pem_file(cert, key).await?;
-                axum_server::bind_rustls(sock_addr, config)
-                    .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-                    .await?;
-            } else if let Some(domain) = &args.domain {
-                use axum_server::tls_rustls::RustlsConfig;
-                use rustls_acme::{AcmeConfig, caches::DirCache};
-                use tokio_stream::StreamExt;
-
-                tracing::info!("SSL enabled (ACME). Domain: {}", domain);
-                let cache_dir = args.acme_cache.clone().unwrap_or_else(|| "letsencrypt".to_string());
-                let mut state = AcmeConfig::new(vec![domain.clone()])
-                    .contact(args.email.iter().map(|e| format!("mailto:{}", e)))
-                    .cache_option(Some(DirCache::new(cache_dir)))
-                    .directory(if args.acme_staging {
-                        lets_encrypt::STAGING
-                    } else {
-                        lets_encrypt::PRODUCTION
-                    })
-                    .state();
-
-                let resolver = state.resolver();
-                let mut rustls_config = rustls::ServerConfig::builder()
-                    .with_no_client_auth()
-                    .with_cert_resolver(resolver);
-                rustls_config.alpn_protocols = vec![
-                    b"acme-tls/1".to_vec(),
-                    b"h2".to_vec(),
-                    b"http/1.1".to_vec(),
-                ];
-                let config = RustlsConfig::from_config(std::sync::Arc::new(rustls_config));
-
-                // Spawn the ACME driver task
-                tokio::spawn(async move {
-                    loop {
-                        match state.next().await {
-                            Some(Ok(ok)) => tracing::info!("ACME event: {:?}", ok),
-                            Some(Err(err)) => tracing::error!("ACME error: {:?}", err),
-                            None => break,
-                        }
-                    }
-                });
-
-                axum_server::bind_rustls(sock_addr, config)
-                    .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-                    .await?;
-            } else {
-                tracing::info!("SSL disabled. Use --ssl-cert/--ssl-key or --domain to enable.");
-                let listener = tokio::net::TcpListener::bind(sock_addr).await?;
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await?;
-            }
+            let listener = tokio::net::TcpListener::bind(sock_addr).await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await?
         }
     }
     Ok(())
-}
-
-mod lets_encrypt {
-    pub const STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
-    pub const PRODUCTION: &str = "https://acme-v02.api.letsencrypt.org/directory";
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]

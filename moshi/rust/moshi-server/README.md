@@ -2,45 +2,11 @@
 
 `moshi-server` is the server implementation for the Moshi voice AI.
 
-## SSL/TLS Support (Secure WebSockets)
+## SSL/TLS (Reverse Proxy)
 
-`moshi-server` supports Secure WebSockets (WSS) and HTTPS via SSL/TLS.
-To enable SSL, you must provide the path to a certificate file (`.pem`) and a private key file (`.pem`).
+This server runs on plain HTTP. For production deployments with HTTPS/WSS, use a reverse proxy like [Caddy](https://caddyserver.com/) or nginx to handle SSL termination.
 
-### Generating Self-Signed Certificates
-
-If you don't have a certificate from a Certificate Authority (CA), you can generate a self-signed certificate for testing/development using `openssl`:
-
-```bash
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
-```
-
-This will create `key.pem` (private key) and `cert.pem` (public certificate).
-
-### Running the Server with SSL
-
-Use the `--ssl-cert` and `--ssl-key` arguments to start the server in secure mode:
-
-```bash
-# Example running with cargo
-cargo run --release --bin moshi-server -- worker \
-    --config config.toml \
-    --ssl-cert cert.pem \
-    --ssl-key key.pem
-```
-
-Or if you have the binary installed:
-
-```bash
-moshi-server worker --config config.toml --ssl-cert cert.pem --ssl-key key.pem
-```
-
-When SSL is enabled, the server will listen on HTTPS/WSS.
-Note: Self-signed certificates will trigger security warnings in browsers. You may need to manually trust the certificate or bypass the warning.
-
-### Default Behavior
-
-If `--ssl-cert` and `--ssl-key` are not provided, the server defaults to plain HTTP/WS.
+See [REVERSE_PROXY_SETUP.md](../../../docs/REVERSE_PROXY_SETUP.md) for configuration details.
 
 ## Authentication
 
@@ -85,32 +51,4 @@ You can also set `authorized_ids` in the configuration file, but using environme
 
 ```toml
 authorized_ids = ["secret_token_1"]
-```
-
-## Automatic SSL (Let's Encrypt)
-
-`moshi-server` supports automatic SSL certificate management via Let's Encrypt (ACME).
-To enable this, provide the `--domain` argument.
-
-```bash
-moshi-server worker \
-    --config config.toml \
-    --domain example.com \
-    --email admin@example.com \
-    --port 443
-```
-
-### Arguments
-- `--domain <DOMAIN>`: The domain name to obtain a certificate for. Enables ACME mode.
-- `--email <EMAIL>`: (Optional) Contact email for Let's Encrypt expiration notices.
-- `--acme-cache <DIR>`: (Optional) Directory to store certificates. Defaults to `letsencrypt`.
-- `--acme-staging`: (Optional) Use Let's Encrypt Staging environment. Recommended for testing to avoid rate limits.
-
-### Requirements
-- The server must be reachable on port 443 (HTTPS) from the public internet for the TLS-ALPN-01 challenge.
-- If running on a different port (e.g. 8080), you must forward external port 443 to this port.
-- **Note**: Running on port 443 typically requires `sudo` or root privileges on Linux.
-
-```bash
-sudo moshi-server worker --config config.toml --domain example.com --port 443
 ```

@@ -2,9 +2,11 @@
 
 ## Systems Design Document
 
-**Version:** 1.0.0  
+**Version:** 1.2.0  
 **Date:** December 2024  
-**Status:** Draft
+**Status:** Draft  
+**Reference Implementation:** `moshi/client/`  
+**Related Docs:** [BETTER_AUTH_INTEGRATION.md](./BETTER_AUTH_INTEGRATION.md), [MOSHI_SERVER_SETUP.md](./MOSHI_SERVER_SETUP.md)
 
 ---
 
@@ -25,6 +27,7 @@
 13. [Deployment Strategy](#deployment-strategy)
 14. [GitHub Issues & Branches](#github-issues--branches)
 15. [Implementation Timeline](#implementation-timeline)
+16. [Existing Moshi Client Implementation Reference](#existing-moshi-client-implementation-reference)
 
 ---
 
@@ -1216,11 +1219,23 @@ For each user story to be considered complete:
                                       │ Text: JSON transcription messages
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        Kyutai Rust STT Server                                │
-│                     /api/asr-streaming endpoint                              │
+│                    Kyutai Rust STT Server (moshi-server)                     │
+│                         stt.fullen.dev (via Caddy)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Endpoints:                                                                  │
+│  • GET  /api/asr-streaming        - WebSocket streaming ASR                  │
+│  • POST /api/asr-streaming        - Batch ASR (audio file upload)            │
+│  • GET  /api/asr-streaming/health - Health check (200 OK)                    │
+│  • GET  /api/build_info           - Server version info                      │
+│  • GET  /api/modules_info         - Loaded modules info                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Authentication (auth.rs):                                                   │
+│  • kyutai-api-key header OR auth_id query param (legacy API key)             │
+│  • Authorization: Bearer <jwt> (Better Auth JWT)                             │
+│  • better-auth.session_token cookie (session cookie)                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌─────────────┐ │
-│  │  WebSocket  │───▶│    Audio     │───▶│    STT      │───▶│ Transcript  │ │
+│  │  WebSocket  │───▶│    Mimi      │───▶│ BatchedAsr  │───▶│ Transcript  │ │
 │  │   Handler   │    │   Decoder    │    │   Engine    │    │   Sender    │ │
 │  └─────────────┘    └──────────────┘    └─────────────┘    └─────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -1249,9 +1264,20 @@ For each user story to be considered complete:
 
 ### Server Requirements
 
+#### moshi-server (STT Backend)
 - Kyutai Rust STT server running on accessible endpoint
+- Default deployment: `stt.fullen.dev` (via Caddy reverse proxy)
 - WebSocket endpoint: `/api/asr-streaming`
+- Health check endpoint: `/api/asr-streaming/health`
 - Support for `ws://` (development) and `wss://` (production)
+- Authentication: API key or Better Auth JWT
+
+#### Better Auth Server (Optional)
+- Node.js auth server for user authentication
+- Located at: `moshi/auth-server/`
+- Default port: 3001
+- Required environment: `BETTER_AUTH_SECRET`, `DATABASE_URL`
+- Provides: Email/password auth, session management, JWT tokens
 
 ### Technology Stack
 
@@ -1263,10 +1289,12 @@ For each user story to be considered complete:
 | **Components** | shadcn/ui |
 | **Icons** | Lucide React |
 | **State** | Zustand |
-| **Audio** | Web Audio API + AudioWorklet + WASM |
-| **WASM** | kyutai-wasm-bridge (Rust) |
+| **Authentication** | Better Auth (JWT cookie cache) |
+| **Audio** | Web Audio API + AudioWorklet |
+| **Audio Encoding** | opus-recorder (Opus codec via WASM) |
+| **Audio Decoding** | decoderWorker (Opus WASM) |
 | **WebSocket** | Native WebSocket API |
-| **Encoding** | @msgpack/msgpack |
+| **Protocol** | Custom binary protocol (see `protocol/encoder.ts`) |
 | **Testing** | Vitest + Playwright |
 | **Linting** | Biome |
 | **Bundler** | Rspack |
@@ -1310,68 +1338,23 @@ pnpm create next-app@latest ./ \
 
 After project initialization, install additional dependencies.
 
-**Note on WASM Bridge:**
-Since the web client is in a separate repository, you must build the `kyutai-wasm-bridge` in the Rust repository and make it available to the client. You can do this via manual copy (Option A) or by publishing to a private registry like GitHub Packages (Option B).
+**Note on Audio Encoding/Decoding:**
+The moshi client uses **opus-recorder** for audio encoding and a pre-built **decoderWorker** for decoding. These handle Opus codec operations via WebAssembly.
 
-**Option A: Manual Copy (Quickest for local dev)**
+**Required Assets:**
+Copy the following files from `moshi/client/public/assets/` to your `public/assets/` directory:
+- `decoderWorker.min.js` - Opus decoder worker script
+- `decoderWorker.min.wasm` - Opus decoder WASM binary
 
-1.  **Build WASM (in Rust repo):**
-    ```bash
-    ./scripts/build-wasm.sh
-    ```
-
-2.  **Copy/Install WASM (in Web Client repo):**
-    Copy the `kyutai-wasm-bridge/pkg` directory to your web client project (e.g., `packages/wasm-bridge`) and install it:
-    ```bash
-    # Create local package directory
-    mkdir -p packages/wasm-bridge
-    cp -r /path/to/rust-repo/kyutai-wasm-bridge/pkg/* ./packages/wasm-bridge/
-
-    # Install local dependency
-    pnpm add ./packages/wasm-bridge
-    ```
-
-**Option B: GitHub Packages (Recommended for teams)**
-
-1.  **Configure WASM Package:**
-    Update `kyutai-wasm-bridge/Cargo.toml` or `wasm-pack` build args to scope the package (e.g--scope your-org`).
-
-2.  **Publish:**
-    Build and publish to GitHub Packages registry.
-    
-    *Note: You must authenticate using a Personal Access Token (Classic) with `write:packages` scope, NOT your GitHub password.*
-    
-    ```bash
-    wasm-pack build --scope your-org
-    cd pkg
-    
-    # Login to GitHub Packages (use username and PAT as password)
-    npm login --registry=https://npm.pkg.github.com
-    
-    # Publish
-    pnpm publish --no-git-checks --registry=https://npm.pkg.github.com
-    ```
-
-3.  **Access on GitHub:**
-    After publishing, you can view the package at:
-    *   Your GitHub Profile -> **Packages** tab
-    *   Or on the repository page sidebar under **Packages**
-
-4.  **Install in Web Client:**
-    Create an `.npmrc` file in the root of your web client project with the following configuration to tell pnpm where to find the package:
-
-    ```ini
-    # .npmrc
-    @your-org:registry=https://npm.pkg.github.com
-    //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-    ```
-
-    Then install the package (replace `your-org` with your GitHub username/org):
-
-    ```bash
-    # Ensure GITHUB_TOKEN is set in your environment, or replace with your actual PAT in .npmrc
-    pnpm add @your-org/kyutai-wasm-bridge
-    ```
+**Audio Protocol:**
+The moshi server uses a custom binary protocol (not MessagePack). See `moshi/client/src/protocol/encoder.ts` for the message format:
+- `0x00` - Handshake
+- `0x01` - Audio data (Opus-encoded)
+- `0x02` - Text
+- `0x03` - Control messages
+- `0x04` - Metadata
+- `0x05` - Error
+- `0x06` - Ping
 
 **Install other dependencies:**
 
@@ -1380,7 +1363,16 @@ Since the web client is in a separate repository, you must build the `kyutai-was
 pnpm dlx shadcn@latest init
 
 # Core dependencies
-pnpm add zustand @msgpack/msgpack nanoid
+pnpm add zustand nanoid
+
+# Audio encoding (Opus codec via WASM)
+pnpm add opus-recorder
+
+# Video duration fix (for WebM recordings)
+pnpm add webm-duration-fix
+
+# Authentication (Better Auth)
+pnpm add better-auth
 
 # React Query for API state management
 pnpm add @tanstack/react-query
@@ -1478,22 +1470,29 @@ hooks/                         # All hooks are client-only
 ├── use-websocket.ts           # [C] WebSocket connection hook
 ├── use-transcript.ts          # [C] Transcript state hook
 ├── use-audio-devices.ts       # [C] Device enumeration hook
-└── use-local-storage.ts       # [C] Persistent settings hook
+├── use-local-storage.ts       # [C] Persistent settings hook
+└── use-auth.ts                # [C] Better Auth authentication hook
 
 lib/
 ├── api/
 │   ├── client.ts              # [C] Client-side API calls
 │   ├── server.ts              # [S] Server-only API (import 'server-only')
 │   └── hooks.ts               # [C] React Query hooks
+├── auth/
+│   ├── auth-client.ts         # [C] Better Auth client configuration
+│   └── types.ts               # Shared auth types (both)
 ├── audio/
 │   ├── audio-context.ts       # [C] import 'client-only'
-│   ├── audio-processor.ts     # [C] AudioWorklet registration
-│   ├── resampler.ts           # [C] Sample rate conversion
+│   ├── audio-processor.ts     # [C] AudioWorklet for playback
 │   └── constants.ts           # Shared constants (both)
+├── decoder/
+│   └── decoderWorker.ts       # [C] Opus decoder worker loader
+├── protocol/
+│   ├── encoder.ts             # [C] Binary message encoding/decoding
+│   └── types.ts               # Shared protocol types (both)
 ├── websocket/
 │   ├── client.ts              # [C] WebSocket client class
-│   ├── message-encoder.ts     # [C] MessagePack encoding
-│   ├── message-decoder.ts     # Shared (both)
+│   ├── security.ts            # [C] URL validation, auth helpers
 │   └── types.ts               # Shared types (both)
 ├── stores/                    # All Zustand stores are client-only
 │   ├── audio-store.ts         # [C] Audio state
@@ -1506,8 +1505,12 @@ lib/
     └── cn.ts                  # Shared (both)
 
 public/
+├── assets/
+│   ├── decoderWorker.min.js   # Opus decoder worker (from moshi/client)
+│   ├── decoderWorker.min.wasm # Opus decoder WASM binary
+│   └── images/                # App images
 ├── worklets/
-│   └── audio-processor.js     # AudioWorklet processor script
+│   └── audio-processor.js     # AudioWorklet processor script (playback)
 └── icons/
     └── ...                    # App icons
 
@@ -2936,11 +2939,18 @@ NODE_ENV=development
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 # STT Server Defaults
-DEFAULT_STT_URL=ws://localhost:8080/api/asr-streaming
+DEFAULT_STT_URL=wss://stt.fullen.dev/api/asr-streaming
 DEFAULT_SAMPLE_RATE=24000
 DEFAULT_BLOCK_SIZE=1920
 MAX_RECONNECT_ATTEMPTS=5
 RECONNECT_DELAY_MS=1500
+
+# Authentication (Better Auth)
+# URL of the Better Auth server (defaults to same origin if not set)
+NEXT_PUBLIC_AUTH_URL=
+# Shared secret for JWT validation (must match moshi-server's BETTER_AUTH_SECRET)
+# Note: This is only needed if running auth server separately
+BETTER_AUTH_SECRET=your-32-character-secret-here
 
 # Feature Flags
 FEATURE_HISTORY=true
@@ -3415,33 +3425,21 @@ export function useValidateUrl() {
 
 #### Client → Server (Binary)
 
-Audio chunks are sent as MessagePack-encoded binary frames:
+Audio chunks are sent as **Opus-encoded binary frames** using a custom binary protocol (not MessagePack).
+
+See the [Binary Protocol Specification](#binary-protocol-specification) in the Existing Moshi Client Implementation Reference section for the complete protocol definition.
 
 ```typescript
-// lib/websocket/message-encoder.ts
-import { encode } from '@msgpack/msgpack';
-
-interface AudioChunk {
-  samples: Float32Array;
-  sampleRate: number;
-  timestamp: number;
-}
-
-export function encodeAudioChunk(chunk: AudioChunk): Uint8Array {
-  // Convert Float32Array to regular array for MessagePack
-  const samplesArray = Array.from(chunk.samples);
-  
-  return encode({
-    samples: samplesArray,
-    sample_rate: chunk.sampleRate,
-    timestamp: chunk.timestamp,
-  });
+// lib/protocol/encoder.ts
+// Audio message: 0x01 prefix + Opus-encoded audio data
+export function encodeAudioMessage(opusData: Uint8Array): Uint8Array {
+  return new Uint8Array([0x01, ...opusData]);
 }
 ```
 
-#### Server → Client (JSON Text)
+#### Server → Client (Binary)
 
-Transcription messages are received as JSON:
+Server messages are also binary-encoded using the same protocol:
 
 ```typescript
 // lib/websocket/types.ts
@@ -3487,6 +3485,32 @@ type ServerMessage = PartialTranscription | FinalTranscription | ErrorMessage | 
 
 ```typescript
 // lib/websocket/client.ts
+import { buildAuthenticatedWsUrl } from './security';
+
+export type ConnectionStatus = 
+  | 'disconnected' 
+  | 'connecting' 
+  | 'connected' 
+  | 'reconnecting' 
+  | 'error';
+
+export interface STTClientOptions {
+  /** Legacy API key for authentication */
+  apiKey?: string;
+  /** Better Auth session token (JWT) */
+  sessionToken?: string;
+  /** Maximum reconnection attempts before giving up */
+  maxReconnectAttempts?: number;
+  /** Base delay between reconnection attempts (ms) */
+  reconnectDelay?: number;
+  /** Callback for incoming server messages */
+  onMessage: (message: ServerMessage) => void;
+  /** Callback for connection status changes */
+  onStatusChange: (status: ConnectionStatus) => void;
+  /** Callback for errors */
+  onError: (error: Error) => void;
+}
+
 export class STTWebSocketClient {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
@@ -3495,15 +3519,7 @@ export class STTWebSocketClient {
   
   constructor(
     private readonly url: string,
-    private readonly options: {
-      apiKey?: string;
-      authId?: string;
-      maxReconnectAttempts?: number;
-      reconnectDelay?: number;
-      onMessage: (message: ServerMessage) => void;
-      onStatusChange: (status: ConnectionStatus) => void;
-      onError: (error: Error) => void;
-    }
+    private readonly options: STTClientOptions
   ) {
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5;
     this.reconnectDelay = options.reconnectDelay ?? 1500;
@@ -3525,8 +3541,12 @@ export class STTWebSocketClient {
       
       this.ws.onmessage = (event) => {
         if (typeof event.data === 'string') {
-          const message = JSON.parse(event.data) as ServerMessage;
-          this.options.onMessage(message);
+          try {
+            const message = JSON.parse(event.data) as ServerMessage;
+            this.options.onMessage(message);
+          } catch (e) {
+            console.error('Failed to parse server message:', e);
+          }
         }
       };
       
@@ -3535,6 +3555,13 @@ export class STTWebSocketClient {
       };
       
       this.ws.onclose = (event) => {
+        // Handle authentication failures (401 Unauthorized)
+        if (event.code === 1008 || event.reason?.includes('Unauthorized')) {
+          this.options.onStatusChange('error');
+          this.options.onError(new Error('Authentication failed'));
+          return;
+        }
+        
         if (!event.wasClean) {
           this.attemptReconnect();
         } else {
@@ -3555,12 +3582,16 @@ export class STTWebSocketClient {
     this.ws = null;
   }
   
+  /** Update authentication token (e.g., after token refresh) */
+  updateAuth(sessionToken: string): void {
+    this.options.sessionToken = sessionToken;
+  }
+  
   private buildUrl(): string {
-    const url = new URL(this.url);
-    if (this.options.authId) {
-      url.searchParams.set('auth_id', this.options.authId);
-    }
-    return url.toString();
+    return buildAuthenticatedWsUrl(this.url, {
+      apiKey: this.options.apiKey,
+      sessionToken: this.options.sessionToken,
+    });
   }
   
   private attemptReconnect(): void {
@@ -3583,234 +3614,461 @@ export class STTWebSocketClient {
 
 ## Audio Pipeline Design
 
-The audio pipeline leverages a Rust-based WebAssembly (WASM) bridge for high-performance audio processing, ensuring consistent behavior with the native CLI client. The pipeline consists of:
+The audio pipeline uses **opus-recorder** for Opus encoding and a pre-built **decoderWorker** for decoding. This matches the existing moshi client implementation in `moshi/client/`.
 
-1.  **Audio Capture**: `getUserMedia` captures raw audio.
-2.  **AudioWorklet**: Buffers raw audio into chunks.
-3.  **WASM Bridge**: Performs resampling and MessagePack encoding in the main thread.
-4.  **WebSocket**: Transmits encoded chunks to the server.
+### Pipeline Overview
 
-### WASM Bridge Integration
+1.  **Audio Capture**: `getUserMedia` captures raw audio from microphone.
+2.  **opus-recorder**: Encodes audio to Opus format at 24kHz, mono.
+3.  **WebSocket**: Transmits Opus-encoded chunks using custom binary protocol.
+4.  **decoderWorker**: Decodes incoming Opus audio from server.
+5.  **AudioWorklet**: Plays back decoded audio with buffering.
 
-The `kyutai-wasm-bridge` package provides the core audio processing logic:
+### Key Components
 
--   `WasmResampler`: High-quality linear resampling.
--   `WasmChunkEncoder`: Efficient MessagePack encoding of audio chunks.
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| `opus-recorder` | npm package | Opus encoding via WASM |
+| `decoderWorker.min.js` | `public/assets/` | Opus decoding worker |
+| `decoderWorker.min.wasm` | `public/assets/` | Opus decoder WASM binary |
+| `audio-processor.ts` | `src/` | AudioWorklet for playback buffering |
+| `protocol/encoder.ts` | `src/protocol/` | Binary message encoding/decoding |
 
-To use the WASM bridge, the `wasm-pack` generated artifacts (`kyutai_wasm_bridge.js`, `kyutai_wasm_bridge_bg.wasm`) must be available in the `public` directory or imported via a bundler that supports WASM (like Webpack 5 or Rspack).
+### opus-recorder Configuration
 
-### AudioWorklet Processor
+The moshi client configures opus-recorder with specific settings for low-latency streaming:
 
-The AudioWorklet is responsible for buffering input samples into chunks of appropriate size (e.g., 1920 samples for 80ms at 24kHz).
+```typescript
+// From moshi/client/src/pages/Conversation/hooks/useUserAudio.ts
+import Recorder from 'opus-recorder';
+import encoderPath from 'opus-recorder/dist/encoderWorker.min.js?url';
 
-```javascript
-// public/worklets/audio-processor.js
-class AudioChunkProcessor extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this.bufferSize = 1920; // Default block size
-    this.buffer = new Float32Array(this.bufferSize);
-    this.bufferIndex = 0;
-  }
-  
-  process(inputs, outputs, parameters) {
-    const input = inputs[0];
-    if (!input || !input[0]) return true;
-    
-    const samples = input[0]; // Mono channel
-    
-    for (let i = 0; i < samples.length; i++) {
-      this.buffer[this.bufferIndex++] = samples[i];
-      
-      if (this.bufferIndex >= this.bufferSize) {
-        // Send chunk to main thread
-        this.port.postMessage({
-          type: 'audio-chunk',
-          samples: this.buffer.slice(),
-          timestamp: currentTime * 1000,
-        });
-        this.bufferIndex = 0;
-      }
-    }
-    
-    // Calculate audio levels for visualization
-    const rms = this.calculateRMS(samples);
-    const peak = this.calculatePeak(samples);
-    
-    this.port.postMessage({
-      type: 'audio-level',
-      rms,
-      peak,
-    });
-    
-    return true;
-  }
-  
-  calculateRMS(samples) {
-    let sum = 0;
-    for (let i = 0; i < samples.length; i++) {
-      sum += samples[i] * samples[i];
-    }
-    return Math.sqrt(sum / samples.length);
-  }
-  
-  calculatePeak(samples) {
-    let peak = 0;
-    for (let i = 0; i < samples.length; i++) {
-      const abs = Math.abs(samples[i]);
-      if (abs > peak) peak = abs;
-    }
-    return peak;
+const recorderOptions = {
+  encoderPath,                    // Path to encoder worker
+  bufferLength: 960,              // Buffer size (960 = 24000 / 12.5 / 2)
+  encoderFrameSize: 20,           // 20ms frames
+  encoderSampleRate: 24000,       // Target sample rate
+  maxFramesPerPage: 2,            // Low latency: 2 frames per page
+  numberOfChannels: 1,            // Mono audio
+  recordingGain: 1,               // No gain adjustment
+  resampleQuality: 3,             // Resampling quality (0-10)
+  encoderComplexity: 0,           // Low complexity for speed
+  encoderApplication: 2049,       // OPUS_APPLICATION_VOIP
+  streamPages: true,              // Stream pages as they're ready
+};
+
+const recorder = new Recorder(recorderOptions);
+
+recorder.ondataavailable = (data: Uint8Array) => {
+  // Send Opus-encoded audio chunk via WebSocket
+  sendMessage({ type: 'audio', data });
+};
+```
+
+### Binary Protocol Encoder
+
+The moshi server uses a custom binary protocol, not MessagePack:
+
+```typescript
+// lib/protocol/encoder.ts
+// Based on moshi/client/src/protocol/encoder.ts
+
+export type WSMessage =
+  | { type: 'handshake'; version: number; model: number }
+  | { type: 'audio'; data: Uint8Array }
+  | { type: 'text'; data: string }
+  | { type: 'control'; action: 'start' | 'endTurn' | 'pause' | 'restart' }
+  | { type: 'metadata'; data: unknown }
+  | { type: 'error'; data: string }
+  | { type: 'ping' };
+
+const CONTROL_MESSAGES_MAP = {
+  start: 0b00000000,
+  endTurn: 0b00000001,
+  pause: 0b00000010,
+  restart: 0b00000011,
+} as const;
+
+export function encodeMessage(message: WSMessage): Uint8Array {
+  switch (message.type) {
+    case 'handshake':
+      return new Uint8Array([0x00, message.version, message.model]);
+    case 'audio':
+      return new Uint8Array([0x01, ...message.data]);
+    case 'text':
+      return new Uint8Array([0x02, ...new TextEncoder().encode(message.data)]);
+    case 'control':
+      return new Uint8Array([0x03, CONTROL_MESSAGES_MAP[message.action]]);
+    case 'metadata':
+      return new Uint8Array([0x04, ...new TextEncoder().encode(JSON.stringify(message.data))]);
+    case 'error':
+      return new Uint8Array([0x05, ...new TextEncoder().encode(message.data)]);
+    case 'ping':
+      return new Uint8Array([0x06]);
   }
 }
 
-registerProcessor('audio-chunk-processor', AudioChunkProcessor);
+export function decodeMessage(data: Uint8Array): WSMessage {
+  const type = data[0];
+  const payload = data.slice(1);
+  
+  switch (type) {
+    case 0x00:
+      return { type: 'handshake', version: 0, model: 0 };
+    case 0x01:
+      return { type: 'audio', data: payload };
+    case 0x02:
+      return { type: 'text', data: new TextDecoder().decode(payload) };
+    case 0x03: {
+      const actionMap = { 0: 'start', 1: 'endTurn', 2: 'pause', 3: 'restart' } as const;
+      return { type: 'control', action: actionMap[payload[0] as keyof typeof actionMap] };
+    }
+    case 0x04:
+      return { type: 'metadata', data: JSON.parse(new TextDecoder().decode(payload)) };
+    case 0x05:
+      return { type: 'error', data: new TextDecoder().decode(payload) };
+    case 0x06:
+      return { type: 'ping' };
+    default:
+      throw new Error(`Unknown message type: ${type}`);
+  }
+}
 ```
 
-### Audio Capture Hook (with WASM)
+### AudioWorklet Processor (Playback)
 
-The `useAudioCapture` hook initializes the WASM module and orchestrates the pipeline.
+The AudioWorklet handles buffered playback of decoded audio from the server:
 
 ```typescript
-// hooks/use-audio-capture.ts
-import { useCallback, useRef, useEffect } from 'react';
-import { useAudioStore } from '@/lib/stores/audio-store';
-import { useConnectionStore } from '@/lib/stores/connection-store';
-// Import types only, load module dynamically
-import type { WasmResampler, WasmChunkEncoder } from 'kyutai-wasm-bridge';
+// Based on moshi/client/src/audio-processor.ts
+// This is for PLAYBACK, not capture
 
-export function useAudioCapture() {
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+class MoshiProcessor extends AudioWorkletProcessor {
+  private frames: Float32Array[] = [];
+  private offsetInFirstBuffer = 0;
+  private started = false;
+  private initialBufferSamples: number;
   
-  // WASM instances
-  const resamplerRef = useRef<WasmResampler | null>(null);
-  const encoderRef = useRef<WasmChunkEncoder | null>(null);
-  const wasmInitializedRef = useRef(false);
-  
-  const { 
-    selectedDeviceId, 
-    updateAudioLevel,
-    isRecording,
-    sampleRate: targetSampleRate
-  } = useAudioStore();
-  
-  const { sendAudio } = useConnectionStore();
-
-  // Initialize WASM (run once)
-  useEffect(() => {
-    const initWasm = async () => {
-      if (wasmInitializedRef.current) return;
+  constructor() {
+    super();
+    // Buffer for 80ms at sample rate
+    const frameSize = Math.round(80 * sampleRate / 1000);
+    this.initialBufferSamples = frameSize;
+    
+    this.port.onmessage = (event) => {
+      if (event.data.type === 'reset') {
+        this.frames = [];
+        this.offsetInFirstBuffer = 0;
+        this.started = false;
+        return;
+      }
       
-      try {
-        // Dynamic import to load WASM asynchronously
-        const wasm = await import('kyutai-wasm-bridge');
-        // If using default export for init: await wasm.default(); 
-        // Note: exact init method depends on bundler/wasm-pack target
-        wasmInitializedRef.current = true;
-      } catch (err) {
-        console.error('Failed to initialize WASM bridge:', err);
+      // Receive decoded audio frame
+      this.frames.push(event.data.frame);
+      
+      // Start playback when buffer is full
+      if (this.currentSamples() >= this.initialBufferSamples && !this.started) {
+        this.started = true;
       }
     };
+  }
+  
+  currentSamples(): number {
+    return this.frames.reduce((sum, f) => sum + f.length, 0) - this.offsetInFirstBuffer;
+  }
+  
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const output = outputs[0][0];
     
-    initWasm();
+    if (!this.started || this.frames.length === 0) {
+      return true; // Output silence
+    }
+    
+    let outIdx = 0;
+    while (outIdx < output.length && this.frames.length > 0) {
+      const first = this.frames[0];
+      const toCopy = Math.min(
+        first.length - this.offsetInFirstBuffer,
+        output.length - outIdx
+      );
+      
+      output.set(
+        first.subarray(this.offsetInFirstBuffer, this.offsetInFirstBuffer + toCopy),
+        outIdx
+      );
+      
+      this.offsetInFirstBuffer += toCopy;
+      outIdx += toCopy;
+      
+      if (this.offsetInFirstBuffer >= first.length) {
+        this.frames.shift();
+        this.offsetInFirstBuffer = 0;
+      }
+    }
+    
+    return true;
+  }
+}
+
+registerProcessor('moshi-processor', MoshiProcessor);
+```
+
+### Audio Capture Hook (with opus-recorder)
+
+The `useUserAudio` hook manages microphone capture and Opus encoding:
+
+```typescript
+// hooks/use-user-audio.ts
+// Based on moshi/client/src/pages/Conversation/hooks/useUserAudio.ts
+
+import { useCallback, useRef, useState } from 'react';
+import Recorder from 'opus-recorder';
+import encoderPath from 'opus-recorder/dist/encoderWorker.min.js?url';
+
+export enum UserMediaStatus {
+  IDLE = 'IDLE',
+  WAITING_FOR_PERMISSION = 'WAITING_FOR_PERMISSION',
+  RECORDING = 'RECORDING',
+  STOPPED = 'STOPPED',
+  ERROR = 'ERROR',
+}
+
+interface UseUserAudioOptions {
+  onDataChunk?: (chunk: Uint8Array) => void;
+  onRecordingStart?: () => void;
+  onRecordingStop?: () => void;
+}
+
+export function useUserAudio({
+  onDataChunk,
+  onRecordingStart,
+  onRecordingStop,
+}: UseUserAudioOptions) {
+  const [status, setStatus] = useState<UserMediaStatus>(UserMediaStatus.IDLE);
+  const [error, setError] = useState<string | null>(null);
+  const recorderRef = useRef<Recorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const startRecording = useCallback(async () => {
+    setStatus(UserMediaStatus.WAITING_FOR_PERMISSION);
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: { ideal: 24000 },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      
+      const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
+      
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      source.connect(analyser);
+      
+      const recorder = new Recorder({
+        encoderPath,
+        bufferLength: Math.round(960 * audioContext.sampleRate / 24000),
+        encoderFrameSize: 20,
+        encoderSampleRate: 24000,
+        maxFramesPerPage: 2,
+        numberOfChannels: 1,
+        recordingGain: 1,
+        resampleQuality: 3,
+        encoderComplexity: 0,
+        encoderApplication: 2049, // OPUS_APPLICATION_VOIP
+        streamPages: true,
+      });
+      
+      recorder.ondataavailable = (data: Uint8Array) => {
+        onDataChunk?.(data);
+      };
+      
+      recorder.onstart = () => {
+        setStatus(UserMediaStatus.RECORDING);
+        onRecordingStart?.();
+      };
+      
+      recorder.onstop = () => {
+        setStatus(UserMediaStatus.STOPPED);
+        source.disconnect();
+        onRecordingStop?.();
+      };
+      
+      recorderRef.current = recorder;
+      recorder.start();
+      
+      return { analyser, stream, source };
+    } catch (err: any) {
+      setError(err.name);
+      setStatus(UserMediaStatus.ERROR);
+      return null;
+    }
+  }, [onDataChunk, onRecordingStart, onRecordingStop]);
+
+  const stopRecording = useCallback(() => {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+  }, []);
+
+  return {
+    status,
+    error,
+    startRecording,
+    stopRecording,
+  };
+}
+```
+
+### Authentication Client & Hook
+
+The authentication system integrates with Better Auth for user authentication.
+
+#### Auth Client Configuration
+
+```typescript
+// lib/auth/auth-client.ts
+'use client';
+
+import { createAuthClient } from 'better-auth/react';
+
+// Create the Better Auth client
+// baseURL defaults to same origin if not specified
+export const authClient = createAuthClient({
+  baseURL: process.env.NEXT_PUBLIC_AUTH_URL || undefined,
+});
+
+// Export commonly used functions
+export const {
+  signIn,
+  signUp,
+  signOut,
+  useSession,
+  getSession,
+} = authClient;
+```
+
+#### Auth Hook
+
+```typescript
+// hooks/use-auth.ts
+'use client';
+
+import { useCallback, useMemo } from 'react';
+import { useSession, signIn, signUp, signOut, getSession } from '@/lib/auth/auth-client';
+
+export interface AuthUser {
+  id: string;
+  name?: string;
+  email?: string;
+  image?: string;
+}
+
+export interface UseAuthReturn {
+  /** Whether the user is authenticated */
+  isAuthenticated: boolean;
+  /** Whether auth state is loading */
+  isLoading: boolean;
+  /** Current user data (null if not authenticated) */
+  user: AuthUser | null;
+  /** Sign in with email/password */
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  /** Sign up with email/password */
+  signUpWithEmail: (email: string, password: string, name?: string) => Promise<void>;
+  /** Sign out */
+  signOut: () => Promise<void>;
+  /** Get current session token (for WebSocket auth) */
+  getSessionToken: () => Promise<string | null>;
+}
+
+export function useAuth(): UseAuthReturn {
+  const { data: session, isPending } = useSession();
+  
+  const isAuthenticated = useMemo(() => {
+    return !!session?.user;
+  }, [session]);
+  
+  const user = useMemo<AuthUser | null>(() => {
+    if (!session?.user) return null;
+    return {
+      id: session.user.id,
+      name: session.user.name ?? undefined,
+      email: session.user.email ?? undefined,
+      image: session.user.image ?? undefined,
+    };
+  }, [session]);
+  
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    const result = await signIn.email({ email, password });
+    if (result.error) {
+      throw new Error(result.error.message || 'Sign in failed');
+    }
   }, []);
   
-  const startCapture = useCallback(async () => {
-    if (!wasmInitializedRef.current) {
-      console.warn('WASM not initialized yet');
+  const signUpWithEmail = useCallback(async (email: string, password: string, name?: string) => {
+    const result = await signUp.email({ email, password, name: name || email.split('@')[0] });
+    if (result.error) {
+      throw new Error(result.error.message || 'Sign up failed');
+    }
+  }, []);
+  
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+  }, []);
+  
+  const getSessionToken = useCallback(async (): Promise<string | null> => {
+    const session = await getSession();
+    // The session token is stored in the cookie
+    // For WebSocket auth, we can use the session ID or fetch the JWT
+    if (!session?.data?.session) return null;
+    
+    // Return the session token for WebSocket authentication
+    // This will be passed as auth_id query parameter
+    return session.data.session.token || session.data.session.id;
+  }, []);
+  
+  return {
+    isAuthenticated,
+    isLoading: isPending,
+    user,
+    signInWithEmail,
+    signUpWithEmail,
+    signOut: handleSignOut,
+    getSessionToken,
+  };
+}
+```
+
+#### Using Auth with WebSocket
+
+```typescript
+// Example: Connecting with authentication
+import { useAuth } from '@/hooks/use-auth';
+import { useConnectionStore } from '@/lib/stores/connection-store';
+
+function TranscriptionPage() {
+  const { isAuthenticated, getSessionToken } = useAuth();
+  const { connect, serverUrl } = useConnectionStore();
+  
+  const handleConnect = async () => {
+    if (!isAuthenticated) {
+      // Redirect to login or show auth modal
       return;
     }
-
-    // Dynamic import for classes
-    const { WasmResampler, WasmChunkEncoder } = await import('kyutai-wasm-bridge');
     
-    // Get microphone access
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-        // Request native sample rate to minimize latency
-        sampleRate: { ideal: 48000 }, 
-        channelCount: { exact: 1 },
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    
-    streamRef.current = stream;
-    
-    // Create AudioContext
-    const audioContext = new AudioContext();
-    audioContextRef.current = audioContext;
-    const sourceRate = audioContext.sampleRate;
-    
-    // Initialize WASM components
-    if (sourceRate !== targetSampleRate) {
-        resamplerRef.current = new WasmResampler(sourceRate, targetSampleRate);
-    } else {
-        resamplerRef.current = null;
-    }
-
-    // Encoder expects target sample rate chunks
-    // Buffer size matches what the worklet sends or multiples thereof
-    encoderRef.current = new WasmChunkEncoder(1920); 
-    
-    // Load AudioWorklet
-    await audioContext.audioWorklet.addModule('/worklets/audio-processor.js');
-    
-    // Create nodes
-    const source = audioContext.createMediaStreamSource(stream);
-    const workletNode = new AudioWorkletNode(audioContext, 'audio-chunk-processor');
-    workletNodeRef.current = workletNode;
-    
-    // Handle messages from worklet
-    workletNode.port.onmessage = (event) => {
-      const { type, samples, rms, peak, timestamp } = event.data;
-      
-      if (type === 'audio-chunk') {
-        let processedSamples = new Float32Array(samples);
-        
-        // Resample if necessary using WASM
-        if (resamplerRef.current) {
-            processedSamples = resamplerRef.current.process(processedSamples);
-        }
-        
-        // Encode using WASM
-        if (encoderRef.current) {
-            try {
-                const encoded = encoderRef.current.encode(processedSamples);
-                sendAudio(encoded);
-            } catch (e) {
-                console.error('WASM encoding error:', e);
-            }
-        }
-      } else if (type === 'audio-level') {
-        updateAudioLevel(rms, peak);
-      }
-    };
-    
-    // Connect nodes
-    source.connect(workletNode);
-    workletNode.connect(audioContext.destination);
-  }, [selectedDeviceId, sendAudio, updateAudioLevel, targetSampleRate]);
+    const token = await getSessionToken();
+    await connect(serverUrl, { sessionToken: token });
+  };
   
-  const stopCapture = useCallback(() => {
-    workletNodeRef.current?.disconnect();
-    audioContextRef.current?.close();
-    streamRef.current?.getTracks().forEach(track => track.stop());
-    
-    workletNodeRef.current = null;
-    audioContextRef.current = null;
-    streamRef.current = null;
-    
-    // Clean up WASM instances
-    resamplerRef.current = null;
-    encoderRef.current = null;
-  }, []);
-  
-  return { startCapture, stopCapture };
+  return (
+    <button onClick={handleConnect}>
+      Connect to STT Server
+    </button>
+  );
 }
 ```
 
@@ -6113,12 +6371,114 @@ export default function RootLayout({
 
 ## Security Considerations
 
-### API Key Management
+### Authentication Architecture
 
-1. **Never expose API keys in client-side code**
-2. **Use environment variables** for default configurations
-3. **Allow user-provided keys** stored in localStorage (encrypted if possible)
+The moshi-server supports multiple authentication methods, allowing flexibility for different deployment scenarios:
+
+#### 1. Legacy API Key Authentication
+
+- **Header**: `kyutai-api-key`
+- **Query Parameter**: `auth_id`
+- **Configuration**: Set via `MOSHI_API_KEY` environment variable (comma-separated list)
+- **Use Case**: Programmatic API access, service-to-service communication
+
+```typescript
+// Example: API key via header
+const ws = new WebSocket('wss://stt.example.com/api/asr-streaming');
+// Set header via custom protocol or use query param
+const wsWithAuth = new WebSocket('wss://stt.example.com/api/asr-streaming?auth_id=your-api-key');
+```
+
+#### 2. Better Auth JWT Authentication
+
+- **Header**: `Authorization: Bearer <jwt-token>`
+- **Cookie**: `better-auth.session_token`
+- **Configuration**: Set `BETTER_AUTH_SECRET` environment variable (must match auth server)
+- **Use Case**: Web client user authentication
+
+```typescript
+// Example: JWT via Authorization header
+const token = await getSessionToken(); // From Better Auth client
+const ws = new WebSocket('wss://stt.example.com/api/asr-streaming');
+// Note: WebSocket API doesn't support custom headers directly
+// Use query param or cookie-based auth instead
+const wsWithJwt = new WebSocket(`wss://stt.example.com/api/asr-streaming?auth_id=${token}`);
+```
+
+#### 3. Session Cookie Authentication
+
+- **Cookie Name**: `better-auth.session_token`
+- **Automatic**: Sent by browser for same-origin requests
+- **Use Case**: Seamless web client authentication when auth server is same-origin
+
+### JWT Claims Structure (Better Auth)
+
+The moshi-server validates JWTs with the following structure:
+
+```typescript
+interface BetterAuthClaims {
+  session: {
+    id: string;           // Session ID
+    userId: string;       // User ID
+    createdAt: string;    // ISO 8601 timestamp
+    updatedAt: string;    // ISO 8601 timestamp
+    expiresAt: string;    // ISO 8601 timestamp (session expiry)
+    token?: string;       // Session token
+    ipAddress?: string;   // Client IP
+    userAgent?: string;   // Client user agent
+  };
+  user: {
+    id: string;           // User ID
+    name?: string;        // Display name
+    email?: string;       // Email address
+    emailVerified?: boolean;
+    image?: string;       // Avatar URL
+  };
+  iat?: number;           // Issued at (Unix timestamp)
+  exp?: number;           // Expiration (Unix timestamp)
+}
+```
+
+### Authentication Flow
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌──────────────────┐
+│   Web Client    │     │  Better Auth    │     │   moshi-server   │
+│   (Next.js)     │     │     Server      │     │     (Rust)       │
+└────────┬────────┘     └────────┬────────┘     └────────┬─────────┘
+         │                       │                        │
+         │  1. Sign In           │                        │
+         │──────────────────────>│                        │
+         │                       │                        │
+         │  2. JWT Cookie        │                        │
+         │<──────────────────────│                        │
+         │                       │                        │
+         │  3. WebSocket + JWT (via query param or cookie)│
+         │───────────────────────────────────────────────>│
+         │                       │                        │
+         │                       │  4. Validate JWT       │
+         │                       │  (BETTER_AUTH_SECRET)  │
+         │                       │                        │
+         │  5. Connection Established                     │
+         │<───────────────────────────────────────────────│
+         │                       │                        │
+```
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `MOSHI_API_KEY` | Comma-separated list of valid API keys | No |
+| `BETTER_AUTH_SECRET` | Shared secret for JWT validation (min 32 chars) | No (required for JWT auth) |
+| `VITE_AUTH_URL` | Better Auth server URL (client-side) | No (defaults to same origin) |
+
+### API Key Management Best Practices
+
+1. **Never expose API keys in client-side code** - Use environment variables
+2. **Use Better Auth for web users** - API keys are for programmatic access
+3. **Allow user-provided keys** stored in localStorage (for development/testing)
 4. **Implement key rotation** support
+5. **Use HTTPS/WSS in production** - Tokens are transmitted in URLs/headers
 
 ### WebSocket Security
 
@@ -6145,6 +6505,26 @@ export function validateServerUrl(url: string): boolean {
 export function sanitizeApiKey(key: string): string {
   // Remove any whitespace and validate format
   return key.trim().replace(/[^a-zA-Z0-9-_]/g, '');
+}
+
+// Build authenticated WebSocket URL
+export function buildAuthenticatedWsUrl(
+  baseUrl: string,
+  options: {
+    apiKey?: string;
+    sessionToken?: string;
+  }
+): string {
+  const url = new URL(baseUrl);
+  
+  // Prefer session token (Better Auth JWT) over API key
+  if (options.sessionToken) {
+    url.searchParams.set('auth_id', options.sessionToken);
+  } else if (options.apiKey) {
+    url.searchParams.set('auth_id', options.apiKey);
+  }
+  
+  return url.toString();
 }
 ```
 
@@ -7100,6 +7480,358 @@ Write developer documentation.
 ### Phase 4: Quality & Polish (Week 7-8)
 - Issues #26-30: Testing
 - Issues #31-35: Deployment and documentation
+
+---
+
+## Existing Moshi Client Implementation Reference
+
+This section documents the actual implementation in `moshi/client/` which serves as the reference for the Next.js web client design.
+
+### Source Code Structure
+
+```
+moshi/client/src/
+├── app.tsx                          # React entry point with router
+├── audio-processor.ts               # AudioWorklet for playback buffering
+├── env.ts                           # Environment configuration
+├── index.css                        # Global styles
+├── modules.d.ts                     # TypeScript module declarations
+├── components/
+│   └── Button/                      # Reusable button component
+├── decoder/
+│   └── decoderWorker.ts             # Opus decoder worker loader
+├── hooks/
+│   └── useAuth.ts                   # Better Auth authentication hook
+├── lib/
+│   └── auth-client.ts               # Better Auth client configuration
+├── pages/
+│   ├── Conversation/                # Main conversation UI
+│   │   ├── Conversation.tsx         # Main conversation component
+│   │   ├── MediaContext.ts          # Audio context provider
+│   │   ├── SocketContext.ts         # WebSocket context provider
+│   │   ├── getMimeType.ts           # MIME type detection
+│   │   ├── components/              # UI components
+│   │   │   ├── AudioVisualizer/     # Audio visualization
+│   │   │   ├── ServerAudio/         # Server audio playback
+│   │   │   ├── UserAudio/           # User microphone capture
+│   │   │   ├── TextDisplay/         # Transcript display
+│   │   │   ├── ServerInfo/          # Server metadata display
+│   │   │   └── ModelParams/         # Model parameter controls
+│   │   └── hooks/                   # Conversation-specific hooks
+│   │       ├── useSocket.ts         # WebSocket connection management
+│   │       ├── useServerAudio.ts    # Server audio decoding/playback
+│   │       ├── useUserAudio.ts      # Microphone capture with opus-recorder
+│   │       ├── useServerText.ts     # Transcript text handling
+│   │       ├── useServerInfo.ts     # Server metadata parsing
+│   │       └── useModelParams.ts    # Model parameter state
+│   └── Queue/                       # Landing/queue page
+│       └── Queue.tsx                # Entry point with settings
+└── protocol/
+    ├── types.ts                     # Message type definitions
+    ├── encoder.ts                   # Binary protocol encoder/decoder
+    └── testMessages.ts              # Test message utilities
+```
+
+### Binary Protocol Specification
+
+The moshi server uses a **custom binary protocol** (not MessagePack). Each message starts with a 1-byte type identifier:
+
+| Type Byte | Message Type | Payload |
+|-----------|--------------|---------|
+| `0x00` | Handshake | `[version: u8, model: u8]` |
+| `0x01` | Audio | `[opus_data: bytes]` |
+| `0x02` | Text | `[utf8_text: bytes]` |
+| `0x03` | Control | `[action: u8]` (0=start, 1=endTurn, 2=pause, 3=restart) |
+| `0x04` | Metadata | `[json_utf8: bytes]` |
+| `0x05` | Error | `[utf8_message: bytes]` |
+| `0x06` | Ping | (no payload) |
+| `0x07` | ColoredText | `[color: u8, utf8_text: bytes]` |
+
+**Source:** `moshi/client/src/protocol/encoder.ts`
+
+### Audio Pipeline Details
+
+#### Microphone Capture (useUserAudio)
+
+The `useUserAudio` hook manages microphone capture with opus-recorder:
+
+```typescript
+// Key configuration from moshi/client/src/pages/Conversation/hooks/useUserAudio.ts
+const recorderOptions = {
+  encoderPath,                        // opus-recorder/dist/encoderWorker.min.js
+  bufferLength: 960 * sampleRate / 24000,  // Scaled buffer
+  encoderFrameSize: 20,               // 20ms Opus frames
+  encoderSampleRate: 24000,           // Target: 24kHz
+  maxFramesPerPage: 2,                // Low latency: 2 frames/page
+  numberOfChannels: 1,                // Mono
+  recordingGain: 1,                   // No gain adjustment
+  resampleQuality: 3,                 // Quality 0-10
+  encoderComplexity: 0,               // Low complexity for speed
+  encoderApplication: 2049,           // OPUS_APPLICATION_VOIP
+  streamPages: true,                  // Stream as ready
+};
+```
+
+**Audio Constraints:**
+```typescript
+{
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  },
+  video: false,
+}
+```
+
+#### Audio Playback (MoshiProcessor AudioWorklet)
+
+The `audio-processor.ts` implements an AudioWorklet for buffered playback:
+
+**Key Parameters:**
+- **frameSize:** 80ms at sample rate
+- **initialBufferSamples:** 1 × frameSize (wait before playback)
+- **partialBufferSamples:** 10ms (additional delay)
+- **maxBufferSamples:** 10ms (drop threshold)
+
+**Buffer Management:**
+1. Frames are queued via `port.postMessage({ frame, type: 'audio', micDuration })`
+2. Playback starts when buffer reaches `initialBufferSamples`
+3. If buffer exceeds `maxBufferSamples`, oldest packets are dropped
+4. Fade-in applied on first output, fade-out on buffer underrun
+
+**Metrics Reported:**
+```typescript
+{
+  totalAudioPlayed: number,    // Total time including silence
+  actualAudioPlayed: number,   // Actual audio output time
+  delay: number,               // Current delay
+  minDelay: number,            // Minimum observed delay
+  maxDelay: number,            // Maximum observed delay
+}
+```
+
+#### Opus Decoding (decoderWorker)
+
+The decoder worker is loaded from pre-built assets:
+```typescript
+// moshi/client/src/decoder/decoderWorker.ts
+export const DecoderWorker = new Worker(
+  new URL("/assets/decoderWorker.min.js", import.meta.url),
+);
+```
+
+**Initialization:**
+```typescript
+decoderWorker.postMessage({
+  command: "init",
+  bufferLength: 960 * audioContext.sampleRate / 24000,
+  decoderSampleRate: 24000,
+  outputBufferSampleRate: audioContext.sampleRate,
+  resampleQuality: 0,
+});
+```
+
+### WebSocket Connection (useSocket)
+
+The `useSocket` hook manages WebSocket lifecycle:
+
+**Key Features:**
+- Binary message type: `arraybuffer`
+- Handshake-based connection confirmation
+- 10-second inactivity timeout
+- Automatic disconnect on timeout
+
+**Connection Flow:**
+1. Create WebSocket with `binaryType = 'arraybuffer'`
+2. Wait for `0x00` (handshake) message from server
+3. Set `isConnected = true` after handshake
+4. Start inactivity timer (10s)
+5. Close socket if no messages received
+
+**URL Building (Conversation.tsx):**
+```typescript
+const buildURL = ({ workerAddr, params, workerAuthId, sessionToken, email, textSeed, audioSeed }) => {
+  const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const url = new URL(`${wsProtocol}://${workerAddr}/api/chat`);
+  
+  // Authentication
+  if (workerAuthId) url.searchParams.append("worker_auth_id", workerAuthId);
+  if (sessionToken) url.searchParams.append("auth_id", sessionToken);
+  if (email) url.searchParams.append("email", email);
+  
+  // Model parameters
+  url.searchParams.append("text_temperature", params.textTemperature.toString());
+  url.searchParams.append("text_topk", params.textTopk.toString());
+  url.searchParams.append("audio_temperature", params.audioTemperature.toString());
+  url.searchParams.append("audio_topk", params.audioTopk.toString());
+  url.searchParams.append("pad_mult", params.padMult.toString());
+  url.searchParams.append("text_seed", textSeed.toString());
+  url.searchParams.append("audio_seed", audioSeed.toString());
+  url.searchParams.append("repetition_penalty_context", params.repetitionPenaltyContext.toString());
+  url.searchParams.append("repetition_penalty", params.repetitionPenalty.toString());
+  
+  // Optional image mode
+  if (params.imageUrl) {
+    url.searchParams.append("image_url", params.imageUrl.toString());
+    url.searchParams.append("image_resolution", params.imageResolution.toString());
+  }
+  
+  return url.toString();
+};
+```
+
+### Authentication Integration
+
+#### Better Auth Client (lib/auth-client.ts)
+
+```typescript
+import { createAuthClient } from "better-auth/react";
+
+export const authClient = createAuthClient({
+  baseURL: import.meta.env.VITE_AUTH_URL || undefined,
+});
+
+export const { signIn, signUp, signOut, useSession, getSession } = authClient;
+
+export async function getSessionToken(): Promise<string | null> {
+  const session = await getSession();
+  if (!session.data) return null;
+  return session.data.session.token;
+}
+```
+
+#### useAuth Hook (hooks/useAuth.ts)
+
+```typescript
+export interface AuthState {
+  user: User | null;
+  session: Session | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+}
+
+export function useAuth(): AuthState & {
+  signIn: typeof authClient.signIn;
+  signUp: typeof authClient.signUp;
+  signOut: () => Promise<void>;
+  getToken: () => Promise<string | null>;
+}
+```
+
+### Model Parameters (useModelParams)
+
+Default values and ranges:
+
+| Parameter | Default | Range |
+|-----------|---------|-------|
+| textTemperature | 0.7 | 0.2 - 1.2 |
+| textTopk | 25 | 10 - 500 |
+| audioTemperature | 0.8 | 0.2 - 1.2 |
+| audioTopk | 250 | 10 - 500 |
+| padMult | 0 | -4 - 4 |
+| repetitionPenalty | 1.0 | 1.0 - 2.0 |
+| repetitionPenaltyContext | 64 | 0 - 200 |
+| imageResolution | 224 | 64 - 512 |
+
+### Server Metadata Schema (useServerInfo)
+
+The server sends metadata via `0x04` message type:
+
+```typescript
+const ServersInfoSchema = z.object({
+  text_temperature: z.number(),
+  text_topk: z.number(),
+  audio_temperature: z.number(),
+  audio_topk: z.number(),
+  pad_mult: z.number(),
+  repetition_penalty_context: z.number(),
+  repetition_penalty: z.number(),
+  lm_model_file: z.string(),
+  instance_name: z.string(),
+  build_info: z.object({
+    build_timestamp: z.string(),
+    build_date: z.string(),
+    git_branch: z.string(),
+    git_timestamp: z.string(),
+    git_date: z.string(),
+    git_hash: z.string(),
+    git_describe: z.string(),
+    rustc_host_triple: z.string(),
+    rustc_version: z.string(),
+    cargo_target_triple: z.string(),
+  }),
+});
+```
+
+### Text Display with Color Support
+
+The `TextDisplay` component supports colored text via `0x07` (coloredtext) messages:
+
+```typescript
+// Color palette (purple to green)
+const textDisplayColors = [
+  "#d19bf7", "#d7acf6", "#debdf5", "#e4cef4",
+  "#ebe0f3", "#eef2f0", "#c8ead9", "#a4e2c4",
+  "#80d9af", "#5bd09a", "#38c886"
+];
+```
+
+### Recording & Export
+
+The `Conversation` component supports recording both audio and video:
+
+**Audio Recording:**
+- Uses `MediaRecorder` with `audioStreamDestination`
+- MIME type detection via `getMimeType('audio')`
+- Supports: `audio/webm`, `audio/mpeg`, `audio/mp4`
+- WebM duration fix applied via `webm-duration-fix`
+
+**Video Recording:**
+- Canvas capture at 30fps with audio track
+- MIME type detection via `getMimeType('video')`
+- Supports: `video/webm`, `video/mp4`
+
+### Context Providers
+
+#### MediaContext
+```typescript
+type MediaContextType = {
+  startRecording: () => void;
+  stopRecording: () => void;
+  audioContext: MutableRefObject<AudioContext>;
+  audioStreamDestination: MutableRefObject<MediaStreamAudioDestinationNode>;
+  worklet: MutableRefObject<AudioWorkletNode>;
+  micDuration: MutableRefObject<number>;
+  actualAudioPlayed: MutableRefObject<number>;
+};
+```
+
+#### SocketContext
+```typescript
+type SocketContextType = {
+  isConnected: boolean;
+  socket: WebSocket | null;
+  sendMessage: (message: WSMessage) => void;
+};
+```
+
+### Required Assets
+
+Copy from `moshi/client/public/assets/` to new project:
+- `decoderWorker.min.js` - Opus decoder worker
+- `decoderWorker.min.wasm` - Opus decoder WASM binary
+
+### Dependencies
+
+From `moshi/client/package.json`:
+- `opus-recorder` - Opus encoding
+- `webm-duration-fix` - Fix WebM duration metadata
+- `better-auth` - Authentication
+- `zod` - Schema validation
+- `eruda` - Mobile debugging (dev only)
+- `react-router-dom` - Routing
 
 ---
 

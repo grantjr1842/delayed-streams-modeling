@@ -30,7 +30,11 @@ The Caddy configuration is located in the `Caddyfile` in the repository root:
 
 ```caddy
 stt.fullen.dev {
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:8080 {
+        # Explicit WebSocket header passthrough for reliable upgrades
+        header_up Connection {http.request.header.Connection}
+        header_up Upgrade {http.request.header.Upgrade}
+    }
 }
 ```
 
@@ -50,7 +54,10 @@ stt.fullen.dev {
 
     # Everything else goes to moshi-server
     handle {
-        reverse_proxy localhost:8080
+        reverse_proxy localhost:8080 {
+            header_up Connection {http.request.header.Connection}
+            header_up Upgrade {http.request.header.Upgrade}
+        }
     }
 }
 ```
@@ -106,11 +113,19 @@ curl https://stt.fullen.dev/metrics
 
 ### WebSocket Connection Issues
 
-Caddy automatically handles WebSocket upgrades. If you experience issues:
+Caddy automatically handles WebSocket upgrades, but explicit header passthrough is configured for reliability:
+
+```caddy
+header_up Connection {http.request.header.Connection}
+header_up Upgrade {http.request.header.Upgrade}
+```
+
+If you experience issues:
 
 1. Ensure moshi-server is running and accessible on port 8080
 2. Check Caddy logs: `sudo journalctl -u caddy -f`
 3. Verify the WebSocket endpoint responds: `curl -I -H "Upgrade: websocket" https://stt.fullen.dev/api/chat`
+4. Reload Caddy after config changes: `sudo caddy reload`
 
 ### SSL Certificate Issues
 

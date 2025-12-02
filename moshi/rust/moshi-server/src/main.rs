@@ -50,9 +50,16 @@ struct WorkerArgs {
     #[clap(long)]
     config: String,
 
-
     #[clap(long)]
     silent: bool,
+
+    /// Maximum size of each log file in MB before rotation (default: 100)
+    #[clap(long, default_value = "100")]
+    log_max_size_mb: u64,
+
+    /// Maximum number of rotated log files to keep (default: 10)
+    #[clap(long, default_value = "10")]
+    log_max_files: usize,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -456,35 +463,97 @@ impl AppStateInner {
     }
 }
 
-fn tracing_init(
-    log_dir: &str,
-    instance_name: &str,
-    log_level: &str,
+/// Configuration for log rotation
+struct LogConfig {
+    log_dir: String,
+    instance_name: String,
+    log_level: String,
     silent: bool,
+    max_size_mb: u64,
+    max_files: usize,
+}
+
+fn tracing_init(
+    config: LogConfig,
 ) -> Result<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_rolling_file::{RollingConditionBase, RollingFileAppenderBase};
     use tracing_subscriber::prelude::*;
+    use tracing_subscriber::fmt::time::ChronoLocal;
 
     let build_info = utils::BuildInfo::new();
-    let file_appender = tracing_appender::rolling::daily(log_dir, format!("log.{instance_name}"));
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    let filter = tracing_subscriber::filter::LevelFilter::from_str(log_level)?;
-    let mut layers = vec![tracing_subscriber::fmt::layer()
-        .event_format(tracing_subscriber::fmt::format().with_file(true).with_line_number(true))
-        .with_writer(non_blocking)
-        .with_filter(filter)
-        .boxed()];
-    if !silent {
-        layers.push(Box::new(
-            tracing_subscriber::fmt::layer()
-                .event_format(
-                    tracing_subscriber::fmt::format().with_file(true).with_line_number(true),
-                )
-                .with_writer(std::io::stdout)
-                .with_filter(filter),
-        ))
-    };
-    tracing_subscriber::registry().with(layers).init();
+    
+    // Create log directory if it doesn't exist
+    std::fs::create_dir_all(&config.log_dir)?;
+    
+    // Build rolling file appender with size-based rotation and max file count
+    // Uses Debian-style naming: log.instance, log.instance.1, log.instance.2, etc.
+    let log_path = std::path::Path::new(&config.log_dir).join(format!("log.{}", config.instance_name));
+    
+    // Create rolling condition: rotate daily OR when file exceeds max_size_mb
+    let condition = RollingConditionBase::new()
+        .daily()
+        .max_size(config.max_size_mb * 1024 * 1024);  // Convert MB to bytes
+    
+    let file_appender = RollingFileAppenderBase::new(
+        log_path,
+        condition,
+        config.max_files,
+    )?;
+    
+    // Get non-blocking writer for async file writes
+    let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
+    
+    let filter = tracing_subscriber::filter::LevelFilter::from_str(&config.log_level)?;
+    
+    // Custom timestamp format: "2025-12-02 01:36:42.113" (more readable than ISO 8601)
+    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string());
+    
+    // File layer: NO ANSI colors, clean timestamps
+    let file_layer = tracing_subscriber::fmt::layer()
+        .event_format(
+            tracing_subscriber::fmt::format()
+                .with_timer(timer.clone())
+                .with_file(true)
+                .with_line_number(true)
+                .with_target(true)
+                .with_ansi(false)  // No ANSI escape codes in log files
+        )
+        .with_writer(non_blocking_file)
+        .with_filter(filter);
+    
+    if config.silent {
+        // File-only logging
+        tracing_subscriber::registry()
+            .with(file_layer)
+            .init();
+    } else {
+        // Console layer: WITH ANSI colors for terminal
+        let console_layer = tracing_subscriber::fmt::layer()
+            .event_format(
+                tracing_subscriber::fmt::format()
+                    .with_timer(timer)
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_target(true)
+                    .with_ansi(true)  // ANSI colors for terminal
+            )
+            .with_writer(std::io::stdout)
+            .with_filter(filter);
+        
+        tracing_subscriber::registry()
+            .with(file_layer)
+            .with(console_layer)
+            .init();
+    }
+    
     tracing::info!(?build_info);
+    tracing::info!(
+        log_dir = %config.log_dir,
+        max_size_mb = config.max_size_mb,
+        max_files = config.max_files,
+        "Logging initialized with rotation"
+    );
+    
     Ok(guard)
 }
 
@@ -557,8 +626,15 @@ async fn main_() -> Result<()> {
             if std::env::var("RUST_LOG").is_err() {
                 std::env::set_var("RUST_LOG", format!("{},hyper=info,mio=info", args.log_level))
             }
-            let _guard =
-                tracing_init(&config.log_dir, &config.instance_name, &args.log_level, args.silent)?;
+            let log_config = LogConfig {
+                log_dir: config.log_dir.clone(),
+                instance_name: config.instance_name.clone(),
+                log_level: args.log_level.clone(),
+                silent: args.silent,
+                max_size_mb: args.log_max_size_mb,
+                max_files: args.log_max_files,
+            };
+            let _guard = tracing_init(log_config)?;
 
             // Log Better Auth status (after tracing is initialized)
             if std::env::var("BETTER_AUTH_SECRET").is_ok() {

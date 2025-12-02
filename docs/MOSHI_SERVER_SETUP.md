@@ -49,15 +49,25 @@ To prevent `CUDA_ERROR_OUT_OF_MEMORY` on the 8GB card, we implemented automatic 
 ### Environment Variables
 - `MOSHI_MODEL_PARAMS_BILLIONS`: Override model size hint (default 7.0).
 - `MOSHI_PER_BATCH_ITEM_MB`: Override VRAM per batch item estimate (default 400).
+- `MOSHI_API_KEY`: Comma-separated list of authorized API keys (replaces hardcoded `authorized_ids` in config).
 
-## 3. Turing (RTX 20xx) Compatibility
+## 3. Authentication
+
+The server now supports loading authorized keys from the `MOSHI_API_KEY` environment variable. This is preferred over hardcoding tokens in the configuration file.
+
+```bash
+export MOSHI_API_KEY="my_secret_token,another_token"
+moshi-server worker --config ...
+```
+
+## 4. Turing (RTX 20xx) Compatibility
 
 - **Issue**: The RTX 2070 (Compute Capability 7.5) supports FP16 but has issues with BF16 in some Candle/Moshi operations, or requires explicit F32 for stability in certain matmul operations.
 - **Fix**:
   - In `moshi/rust/moshi-core/src/nn.rs`, the `matmul_dtype` function is forced to return `DType::F32` for now.
   - `utils.rs` or `main.rs` might detect `7.5` and suggest `F16`, but the core logic enforces safe types where necessary.
 
-## 4. Configuration Files
+## 5. Configuration Files
 
 - **`configs/config-stt-en_fr-lowram-sm75.toml`**:
   - Created a specific configuration for this setup.
@@ -65,7 +75,7 @@ To prevent `CUDA_ERROR_OUT_OF_MEMORY` on the 8GB card, we implemented automatic 
   - Adjusts model paths to local cached assets.
   - Configures `BatchedAsr` with a safe initial batch size (e.g., 4 or 8), which is then auto-lowered by the server if needed.
 
-## 5. Building
+## 6. Building
 
 To build the server with these changes:
 ```bash

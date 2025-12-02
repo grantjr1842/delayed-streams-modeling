@@ -45,10 +45,3 @@ tui-logger = { workspace = true }
 default = []
 cuda = ["moshi/cuda", "candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 metal = ["moshi/metal", "candle/metal", "candle-nn/metal", "candle-transformers/metal"]
-
-[profile.release]
-debug = true
-
-[profile.release-no-debug]
-inherits = "release"
-debug = false

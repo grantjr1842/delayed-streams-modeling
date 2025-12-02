@@ -13,6 +13,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 mod asr;
+mod auth;
 mod batched_asr;
 mod lm;
 mod metrics;
@@ -25,7 +26,6 @@ mod tts;
 mod tts_preprocess;
 mod utils;
 
-const ID_HEADER: &str = "kyutai-api-key";
 const ROOM_ID_HEADER: &str = "room_id";
 
 pub const TTS_PY: &[u8] = include_bytes!("../tts.py");
@@ -49,6 +49,7 @@ struct WorkerArgs {
 
     #[clap(long)]
     config: String,
+
 
     #[clap(long)]
     silent: bool,
@@ -212,6 +213,17 @@ impl Config {
         use utils::resolve_or_download as rod;
         let config = std::fs::read_to_string(p)?;
         let mut config: Self = toml::from_str(&config)?;
+
+        // Load authorized IDs from environment variable
+        if let Ok(env_keys) = std::env::var("MOSHI_API_KEY") {
+            for key in env_keys.split(',') {
+                let key = key.trim();
+                if !key.is_empty() {
+                    config.authorized_ids.insert(key.to_string());
+                }
+            }
+        }
+
         for (_, c) in config.modules.iter_mut() {
             match c {
                 ModuleConfig::Mimi { send_path: _, recv_path: _, config: c } => {
@@ -548,6 +560,11 @@ async fn main_() -> Result<()> {
             let _guard =
                 tracing_init(&config.log_dir, &config.instance_name, &args.log_level, args.silent)?;
 
+            // Log Better Auth status (after tracing is initialized)
+            if std::env::var("BETTER_AUTH_SECRET").is_ok() {
+                tracing::info!("Better Auth JWT validation enabled (BETTER_AUTH_SECRET is set)");
+            }
+
             // Auto-detect GPU capabilities and adjust configuration
             if let Ok(gpu_info) = utils::get_gpu_info() {
                 // Extract model info from the first LM-bearing module for logging
@@ -674,13 +691,13 @@ async fn main_() -> Result<()> {
                     .unwrap_or(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)),
                 args.port,
             ));
-            tracing::info!("listening on http://{}", sock_addr);
+            tracing::info!("listening on {}", sock_addr);
             let listener = tokio::net::TcpListener::bind(sock_addr).await?;
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             )
-            .await?;
+            .await?
         }
     }
     Ok(())
@@ -762,12 +779,8 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         req: axum::Json<TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts query {req:?}");
-        let valid_id = headers
-            .get(ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let (wav, transcript) = {
             let _guard = state.0 .0.mutex.lock().await;
@@ -797,15 +810,8 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        // It's tricky to set the headers of a websocket in javascript so we pass the token via the
-        // query too.
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
@@ -909,6 +915,10 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
         }
     }
 
+    async fn health() -> impl IntoResponse {
+        StatusCode::OK
+    }
+
     async fn t(
         ws: axum::extract::ws::WebSocketUpgrade,
         headers: axum::http::HeaderMap,
@@ -917,15 +927,8 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling asr-streaming query");
-        // It's tricky to set the headers of a websocket in javascript so we pass the token via the
-        // query too.
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -933,7 +936,10 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
             ws.write_buffer_size(0).on_upgrade(move |v| asr_websocket(v, asr, asr_query, addr));
         Ok(upg)
     }
-    axum::Router::new().route(path, axum::routing::get(t)).with_state((s, ss.clone()))
+    axum::Router::new()
+        .route(path, axum::routing::get(t))
+        .route(&format!("{path}/health"), axum::routing::get(health))
+        .with_state((s, ss.clone()))
 }
 
 fn batched_asr_router(
@@ -952,6 +958,10 @@ fn batched_asr_router(
         }
     }
 
+    async fn health() -> impl IntoResponse {
+        StatusCode::OK
+    }
+
     // TODO: add a batch mode.
     async fn t(
         state: axum::extract::State<(Arc<batched_asr::BatchedAsr>, SharedState)>,
@@ -959,12 +969,8 @@ fn batched_asr_router(
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!(len = req.len(), "handling asr post query");
-        let valid_id = headers
-            .get(ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
         Ok((
@@ -983,15 +989,8 @@ fn batched_asr_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling batched asr-streaming query");
-        // It's tricky to set the headers of a websocket in javascript so we pass the token via the
-        // query too.
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1002,6 +1001,7 @@ fn batched_asr_router(
     axum::Router::new()
         .route(path, axum::routing::post(t))
         .route(path, axum::routing::get(streaming_t))
+        .route(&format!("{path}/health"), axum::routing::get(health))
         .with_state((s, ss.clone()))
 }
 
@@ -1047,12 +1047,8 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
         req: axum::Json<py_module::TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py streaming post query {req:?}");
-        let valid_id = headers
-            .get(ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let wav_stream = state.0 .0.handle_query(&req).await?;
         let body = Body::from_stream(wav_stream);
@@ -1073,15 +1069,8 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
     ) -> utils::AxumResult<Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
-        // It's tricky to set the headers of a websocket in javascript so we pass the token via the
-        // query too.
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
@@ -1115,12 +1104,8 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py asr streaming post query {req:?}");
-        let valid_id = headers
-            .get(ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
 
@@ -1140,15 +1125,8 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
-        // It's tricky to set the headers of a websocket in javascript so we pass the token via the
-        // query too.
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
@@ -1197,13 +1175,8 @@ fn mimi_router(
         // It's tricky to set the headers of a websocket in javascript so we pass the token via the
         // query too.
         if state.0 .0.auth_recv() {
-            let auth_id = match headers.get(ID_HEADER) {
-                Some(v) => v.to_str().ok(),
-                None => req.auth_id.as_deref(),
-            };
-            let valid_id = auth_id.is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-            if !valid_id {
-                return Ok(StatusCode::UNAUTHORIZED.into_response());
+            if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
+                return Ok(code.into_response());
             }
         }
         let room_id = match headers.get(ROOM_ID_HEADER) {
@@ -1236,13 +1209,8 @@ fn mimi_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
-        let auth_id = match headers.get(ID_HEADER) {
-            Some(v) => v.to_str().ok(),
-            None => req.auth_id.as_deref(),
-        };
-        let valid_id = auth_id.is_some_and(|id| state.0 .1.config.authorized_ids.contains(id));
-        if !valid_id {
-            return Ok(StatusCode::UNAUTHORIZED.into_response());
+        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
+            return Ok(code.into_response());
         }
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),

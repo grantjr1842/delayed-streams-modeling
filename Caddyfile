@@ -21,5 +21,9 @@ stt.fullen.dev {
 	#   - /api/modules_info (GET - modules info)
 	#   - /metrics (GET - Prometheus metrics)
 	#   - /* (Static files - client app)
-	reverse_proxy localhost:8080
+	reverse_proxy localhost:8080 {
+		# Explicit WebSocket header passthrough for reliable upgrades
+		header_up Connection {http.request.header.Connection}
+		header_up Upgrade {http.request.header.Upgrade}
+	}
 }

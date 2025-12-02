@@ -1,3 +1,25 @@
+# Moshi Server Reverse Proxy Configuration
+# See docs/REVERSE_PROXY_SETUP.md for details
+
 stt.fullen.dev {
+	# Better Auth server routes (if auth-server is running on port 3001)
+	# Uncomment the following block to enable auth server routing:
+	# handle /api/auth/* {
+	#     reverse_proxy localhost:3001
+	# }
+	# handle /health {
+	#     reverse_proxy localhost:3001
+	# }
+
+	# All other routes go to moshi-server
+	# This includes:
+	#   - /api/chat (WebSocket - ASR streaming)
+	#   - /api/asr (WebSocket - ASR streaming, dynamic path)
+	#   - /api/tts (POST - TTS)
+	#   - /api/tts_streaming (WebSocket - TTS streaming)
+	#   - /api/build_info (GET - build info)
+	#   - /api/modules_info (GET - modules info)
+	#   - /metrics (GET - Prometheus metrics)
+	#   - /* (Static files - client app)
 	reverse_proxy localhost:8080
 }

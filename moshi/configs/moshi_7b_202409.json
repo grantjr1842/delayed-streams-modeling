@@ -27,7 +27,23 @@
     "depformer_gating": "silu",
     "depformer_pos_emb": "none",
     "depformer_weights_per_step": true,
-    "delays": [0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1]
+    "delays": [
+        0,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+    ]
 }
-
-

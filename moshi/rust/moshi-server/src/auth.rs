@@ -20,30 +20,61 @@ pub const SESSION_COOKIE: &str = "better-auth.session_token";
 /// Global JWT secret loaded from environment
 static JWT_SECRET: OnceLock<Option<String>> = OnceLock::new();
 
-/// Better Auth session claims structure
-/// This matches the JWT payload from Better Auth's cookie cache with JWT strategy
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BetterAuthClaims {
+/// Session data within the Better Auth JWT
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionData {
     /// Session ID
     pub id: String,
     /// User ID
     #[serde(rename = "userId")]
     pub user_id: String,
-    /// Session creation time (Unix timestamp)
+    /// Session creation time (ISO 8601 string)
     #[serde(rename = "createdAt")]
-    pub created_at: i64,
-    /// Session update time (Unix timestamp)
+    pub created_at: String,
+    /// Session update time (ISO 8601 string)
     #[serde(rename = "updatedAt")]
-    pub updated_at: i64,
-    /// Session expiration time (Unix timestamp)
+    pub updated_at: String,
+    /// Session expiration time (ISO 8601 string)
     #[serde(rename = "expiresAt")]
-    pub expires_at: i64,
+    pub expires_at: String,
+    /// Session token
+    #[serde(default)]
+    pub token: Option<String>,
     /// IP address (optional)
     #[serde(rename = "ipAddress", default)]
     pub ip_address: Option<String>,
     /// User agent (optional)
     #[serde(rename = "userAgent", default)]
     pub user_agent: Option<String>,
+}
+
+/// User data within the Better Auth JWT
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserData {
+    /// User ID
+    pub id: String,
+    /// User name
+    #[serde(default)]
+    pub name: Option<String>,
+    /// User email
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Email verified flag
+    #[serde(rename = "emailVerified", default)]
+    pub email_verified: Option<bool>,
+    /// User image URL
+    #[serde(default)]
+    pub image: Option<String>,
+}
+
+/// Better Auth session claims structure
+/// This matches the JWT payload from Better Auth's cookie cache with JWT strategy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BetterAuthClaims {
+    /// Session data
+    pub session: SessionData,
+    /// User data
+    pub user: UserData,
     /// JWT standard claims
     #[serde(default)]
     pub iat: Option<i64>,
@@ -135,16 +166,22 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
         Ok(token_data) => {
             let claims = token_data.claims;
 
-            // Check if session has expired using the expiresAt field
+            // Check if session has expired using the expiresAt field (ISO 8601 string)
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
+                .map(|d| d.as_secs())
                 .unwrap_or(0);
 
-            if claims.expires_at < now {
+            // Parse ISO 8601 date string to Unix timestamp
+            // Format: "2025-12-09T01:45:53.707Z"
+            let expires_at = chrono::DateTime::parse_from_rfc3339(&claims.session.expires_at)
+                .map(|dt| dt.timestamp() as u64)
+                .unwrap_or(0);
+
+            if expires_at < now {
                 tracing::debug!(
-                    user_id = %claims.user_id,
-                    expires_at = claims.expires_at,
+                    user_id = %claims.session.user_id,
+                    expires_at = %claims.session.expires_at,
                     now = now,
                     "Session expired"
                 );
@@ -152,8 +189,9 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
             }
 
             tracing::debug!(
-                user_id = %claims.user_id,
-                session_id = %claims.id,
+                user_id = %claims.session.user_id,
+                session_id = %claims.session.id,
+                email = ?claims.user.email,
                 "JWT validated successfully"
             );
             Ok(claims)

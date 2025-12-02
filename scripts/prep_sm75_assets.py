@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
+
 #!/usr/bin/env python3
+
 """
 One-shot helper that detects the active CUDA devices and runs the bf16->fp16
 conversion workflow when a pre-Ampere GPU (SM75 and earlier) is detected or

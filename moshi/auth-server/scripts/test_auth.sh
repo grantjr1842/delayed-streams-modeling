@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+JWT="eyJhbGciOiJIUzI1NiJ9.eyJzZXNzaW9uIjp7ImV4cGlyZXNBdCI6IjIwMjUtMTItMDlUMDE6NDU6NTMuNzA3WiIsInRva2VuIjoiS2phYU1GdzdSMHpWUkZER3BXTFVVZGtESEd3SzdqVjQiLCJjcmVhdGVkQXQiOiIyMDI1LTEyLTAyVDAxOjQ1OjUzLjcwN1oiLCJ1cGRhdGVkQXQiOiIyMDI1LTEyLTAyVDAxOjQ1OjUzLjcwN1oiLCJpcEFkZHJlc3MiOiIiLCJ1c2VyQWdlbnQiOiJjdXJsLzguNS4wIiwidXNlcklkIjoiRjc5ank5NVpWUlVMQ2VodFNuMTUyaWx6M3lKZ2hvRnciLCJpZCI6InJ1OWIzb3VROG04ZUE1b3E0ak90TjhGOEt0Y2x3VXF3In0sInVzZXIiOnsibmFtZSI6IlRlc3QgVXNlciIsImVtYWlsIjoidGVzdEBleGFtcGxlLmNvbSIsImVtYWlsVmVyaWZpZWQiOmZhbHNlLCJpbWFnZSI6bnVsbCwiY3JlYXRlZEF0IjoiMjAyNS0xMi0wMlQwMTo0NToyMC4zNDRaIiwidXBkYXRlZEF0IjoiMjAyNS0xMi0wMlQwMTo0NToyMC4zNDRaIiwiaWQiOiJGNzlqeTk1WlZSVUxDZWh0U24xNTJpbHozeUpnaG9GdyJ9LCJ1cGRhdGVkQXQiOjE3NjQ2Mzk5NTM3MTIsInZlcnNpb24iOiIxIiwiaWF0IjoxNzY0NjM5OTUzLCJleHAiOjE3NjUyNDQ3NTN9.hUzhDk_8po92f19FHFMORdx73Krq8rj-39Izg76DxCE"
+
+echo "Test 1: No auth"
+curl -m 2 -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/asr-streaming
+
+echo "Test 2: Bearer token"
+curl -m 2 -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $JWT" http://localhost:8080/api/asr-streaming
+
+echo "Test 3: Cookie"
+curl -m 2 -s -o /dev/null -w "%{http_code}\n" -H "Cookie: better-auth.session_token=$JWT" http://localhost:8080/api/asr-streaming

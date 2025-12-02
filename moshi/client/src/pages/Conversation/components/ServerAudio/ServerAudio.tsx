@@ -1,5 +1,5 @@
-import { FC, useRef } from "react";
-import { AudioStats, useServerAudio } from "../../hooks/useServerAudio";
+import { type FC, useRef } from "react";
+import { type AudioStats, useServerAudio } from "../../hooks/useServerAudio";
 import { ServerVisualizer } from "../AudioVisualizer/ServerVisualizer";
 
 type ServerAudioProps = {
@@ -7,7 +7,11 @@ type ServerAudioProps = {
   imageUrl: string | undefined;
   copyCanvasRef?: React.RefObject<HTMLCanvasElement>;
 };
-export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, imageUrl, copyCanvasRef }) => {
+export const ServerAudio: FC<ServerAudioProps> = ({
+  setGetAudioStats,
+  imageUrl,
+  copyCanvasRef,
+}) => {
   const { analyser, hasCriticalDelay, setHasCriticalDelay } = useServerAudio({
     setGetAudioStats,
   });
@@ -18,6 +22,7 @@ export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, imageUrl, 
         <div className="fixed left-0 top-0 flex w-screen justify-between bg-red-500 p-2 text-center text-white">
           <p>A connection issue has been detected, you've been reconnected</p>
           <button
+            type="button"
             onClick={async () => {
               setHasCriticalDelay(false);
             }}
@@ -27,8 +32,13 @@ export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, imageUrl, 
           </button>
         </div>
       )}
-      <div className="server-audio h-4/6 aspect-square" ref={containerRef}>
-        <ServerVisualizer analyser={analyser.current} parent={containerRef} imageUrl={imageUrl} copyCanvasRef={copyCanvasRef} />
+      <div className="server-audio aspect-square h-4/6" ref={containerRef}>
+        <ServerVisualizer
+          analyser={analyser.current}
+          parent={containerRef}
+          imageUrl={imageUrl}
+          copyCanvasRef={copyCanvasRef}
+        />
       </div>
     </>
   );

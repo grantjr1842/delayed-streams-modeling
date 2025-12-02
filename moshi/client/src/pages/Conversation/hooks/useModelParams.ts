@@ -18,27 +18,48 @@ export type ModelParamsValues = {
   audioTemperature: number;
   audioTopk: number;
   padMult: number;
-  repetitionPenaltyContext: number,
-  repetitionPenalty: number,
-  imageResolution: number,
-  imageUrl: string | undefined,
-  displayColor: boolean,
+  repetitionPenaltyContext: number;
+  repetitionPenalty: number;
+  imageResolution: number;
+  imageUrl: string | undefined;
+  displayColor: boolean;
 };
 
 type useModelParamsArgs = Partial<ModelParamsValues>;
 
 export const useModelParams = (params?: useModelParamsArgs) => {
-
-  const [textTemperature, setTextTemperatureBase] = useState(params?.textTemperature || DEFAULT_TEXT_TEMPERATURE);
-  const [textTopk, setTextTopkBase] = useState(params?.textTopk || DEFAULT_TEXT_TOPK);
-  const [audioTemperature, setAudioTemperatureBase] = useState(params?.audioTemperature || DEFAULT_AUDIO_TEMPERATURE);
-  const [audioTopk, setAudioTopkBase] = useState(params?.audioTopk || DEFAULT_AUDIO_TOPK);
-  const [padMult, setPadMultBase] = useState(params?.padMult || DEFAULT_PAD_MULT);
-  const [repetitionPenalty, setRepetitionPenaltyBase] = useState(params?.repetitionPenalty || DEFAULT_REPETITION_PENALTY);
-  const [repetitionPenaltyContext, setRepetitionPenaltyContextBase] = useState(params?.repetitionPenaltyContext || DEFAULT_REPETITION_PENALTY_CONTEXT);
-  const [imageResolution, setImageResolutionBase] = useState(params?.imageResolution || DEFAULT_IMAGE_RESOLUTION);
-  const [imageUrl, setImageUrlBase] = useState(params?.imageUrl || DEFAULT_IMAGE_URL);
-  const [displayColor, setDisplayColorBase] = useState<boolean>(params?.displayColor == undefined ? DEFAULT_DISPLAY_COLOR : params?.displayColor);
+  const [textTemperature, setTextTemperatureBase] = useState(
+    params?.textTemperature || DEFAULT_TEXT_TEMPERATURE,
+  );
+  const [textTopk, setTextTopkBase] = useState(
+    params?.textTopk || DEFAULT_TEXT_TOPK,
+  );
+  const [audioTemperature, setAudioTemperatureBase] = useState(
+    params?.audioTemperature || DEFAULT_AUDIO_TEMPERATURE,
+  );
+  const [audioTopk, setAudioTopkBase] = useState(
+    params?.audioTopk || DEFAULT_AUDIO_TOPK,
+  );
+  const [padMult, setPadMultBase] = useState(
+    params?.padMult || DEFAULT_PAD_MULT,
+  );
+  const [repetitionPenalty, setRepetitionPenaltyBase] = useState(
+    params?.repetitionPenalty || DEFAULT_REPETITION_PENALTY,
+  );
+  const [repetitionPenaltyContext, setRepetitionPenaltyContextBase] = useState(
+    params?.repetitionPenaltyContext || DEFAULT_REPETITION_PENALTY_CONTEXT,
+  );
+  const [imageResolution, setImageResolutionBase] = useState(
+    params?.imageResolution || DEFAULT_IMAGE_RESOLUTION,
+  );
+  const [imageUrl, setImageUrlBase] = useState(
+    params?.imageUrl || DEFAULT_IMAGE_URL,
+  );
+  const [displayColor, setDisplayColorBase] = useState<boolean>(
+    params?.displayColor === undefined
+      ? DEFAULT_DISPLAY_COLOR
+      : params?.displayColor,
+  );
 
   const resetParams = useCallback(() => {
     setTextTemperatureBase(DEFAULT_TEXT_TEMPERATURE);
@@ -50,19 +71,8 @@ export const useModelParams = (params?: useModelParamsArgs) => {
     setRepetitionPenaltyContextBase(DEFAULT_REPETITION_PENALTY_CONTEXT);
     setImageResolutionBase(DEFAULT_IMAGE_RESOLUTION);
     setImageUrlBase(DEFAULT_IMAGE_URL);
-    setDisplayColorBase(DEFAULT_DISPLAY_COLOR)
-  }, [
-    setTextTemperatureBase,
-    setTextTopkBase,
-    setAudioTemperatureBase,
-    setAudioTopkBase,
-    setPadMultBase,
-    setRepetitionPenaltyBase,
-    setRepetitionPenaltyContextBase,
-    setImageResolutionBase,
-    setImageUrlBase,
-    setDisplayColorBase
-  ]);
+    setDisplayColorBase(DEFAULT_DISPLAY_COLOR);
+  }, []);
 
   const setTextTemperature = useCallback((value: number) => {
     if (value <= 1.2 && value >= 0.2) {
@@ -133,5 +143,5 @@ export const useModelParams = (params?: useModelParamsArgs) => {
     setImageResolution,
     setDisplayColor,
     resetParams,
-  }
-}
+  };
+};

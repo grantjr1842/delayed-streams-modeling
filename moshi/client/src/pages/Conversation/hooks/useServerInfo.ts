@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSocketContext } from "../SocketContext";
-import { decodeMessage } from "../../../protocol/encoder";
 import { z } from "zod";
+import { decodeMessage } from "../../../protocol/encoder";
+import { useSocketContext } from "../SocketContext";
 
 const ServersInfoSchema = z.object({
   text_temperature: z.number(),
@@ -28,7 +28,7 @@ const ServersInfoSchema = z.object({
 });
 
 const parseInfo = (infos: any) => {
-  const serverInfo =  ServersInfoSchema.safeParse(infos);
+  const serverInfo = ServersInfoSchema.safeParse(infos);
   if (!serverInfo.success) {
     console.error(serverInfo.error);
     return null;
@@ -47,21 +47,21 @@ type ServerInfo = {
   lm_model_file: string;
   instance_name: string;
   build_info: {
-      build_timestamp: string;
-      build_date: string;
-      git_branch: string;
-      git_timestamp: string;
-      git_date: string;
-      git_hash: string;
-      git_describe: string;
-      rustc_host_triple: string;
-      rustc_version: string;
-      cargo_target_triple: string;
+    build_timestamp: string;
+    build_date: string;
+    git_branch: string;
+    git_timestamp: string;
+    git_date: string;
+    git_hash: string;
+    git_describe: string;
+    rustc_host_triple: string;
+    rustc_version: string;
+    cargo_target_triple: string;
   };
-}
+};
 
 export const useServerInfo = () => {
-  const [serverInfo, setServerInfo] = useState<ServerInfo|null>(null);
+  const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const { socket } = useSocketContext();
 
   const onSocketMessage = useCallback((e: MessageEvent) => {
@@ -74,7 +74,7 @@ export const useServerInfo = () => {
         console.log("received metadata", infos);
       }
     }
-  }, [setServerInfo]);
+  }, []);
 
   useEffect(() => {
     const currentSocket = socket;
@@ -86,7 +86,7 @@ export const useServerInfo = () => {
     return () => {
       currentSocket.removeEventListener("message", onSocketMessage);
     };
-  }, [socket]);
+  }, [socket, onSocketMessage]);
 
   return { serverInfo };
 };

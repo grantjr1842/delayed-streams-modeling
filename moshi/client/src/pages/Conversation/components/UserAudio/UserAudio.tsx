@@ -64,8 +64,12 @@ export const UserAudio: FC<UserAudioProps> = ({ copyCanvasRef }) => {
   }, [startRecordingUser, stopRecording, isConnected]);
 
   return (
-    <div className="user-audio h-5/6 aspect-square" ref={containerRef}>
-      <ClientVisualizer analyser={analyser} parent={containerRef} copyCanvasRef={copyCanvasRef} />
+    <div className="user-audio aspect-square h-5/6" ref={containerRef}>
+      <ClientVisualizer
+        analyser={analyser}
+        parent={containerRef}
+        copyCanvasRef={copyCanvasRef}
+      />
     </div>
   );
 };

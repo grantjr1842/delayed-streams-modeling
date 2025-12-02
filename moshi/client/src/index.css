@@ -3,7 +3,6 @@
 @tailwind utilities;
 
 @layer utilities {
-
   /* Hide scrollbar for Chrome, Safari and Opera */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
@@ -61,10 +60,9 @@
   max-width: 450px;
 }
 
-.presentation>p {
+.presentation > p {
   padding-top: 10px;
 }
-
 
 .gallery {
   max-width: 450px;
@@ -74,15 +72,13 @@
   color: #54e8b3;
 }
 
-
 .download-links {
   color: #54e8b3;
 }
 
 .explain-links {
-  color: #BCFCE5;
+  color: #bcfce5;
 }
-
 
 .controls {
   grid-area: controls;

@@ -1,9 +1,9 @@
 import {
-  CONTROL_MESSAGE,
+  type CONTROL_MESSAGE,
   CONTROL_MESSAGES_MAP,
   MODELS_MAP,
-  WSMessage,
   VERSIONS_MAP,
+  type WSMessage,
 } from "./types";
 
 export const encodeMessage = (message: WSMessage): Uint8Array => {
@@ -19,7 +19,11 @@ export const encodeMessage = (message: WSMessage): Uint8Array => {
     case "text":
       return new Uint8Array([0x02, ...new TextEncoder().encode(message.data)]);
     case "coloredtext":
-      return new Uint8Array([0x02, 0x05, ...new TextEncoder().encode(message.data)]);
+      return new Uint8Array([
+        0x02,
+        0x05,
+        ...new TextEncoder().encode(message.data),
+      ]);
     case "control":
       return new Uint8Array([0x03, CONTROL_MESSAGES_MAP[message.action]]);
     case "metadata":
@@ -79,16 +83,16 @@ export const decodeMessage = (data: Uint8Array): WSMessage => {
       return {
         type: "metadata",
         data: JSON.parse(new TextDecoder().decode(payload)),
-      }
+      };
     case 0x05:
       return {
         type: "error",
         data: new TextDecoder().decode(payload),
-      }
+      };
     case 0x06:
       return {
         type: "ping",
-      }
+      };
     default: {
       console.log(type);
       throw new Error("Unknown message type");

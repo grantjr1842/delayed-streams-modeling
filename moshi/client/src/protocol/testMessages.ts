@@ -1,4 +1,4 @@
-import { WSMessage } from "./types";
+import type { WSMessage } from "./types";
 
 export const handshakeMessage: WSMessage = {
   type: "handshake",

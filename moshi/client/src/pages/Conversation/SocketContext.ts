@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { WSMessage } from "../../protocol/types";
+import type { WSMessage } from "../../protocol/types";
 
 type SocketContextType = {
   isConnected: boolean;

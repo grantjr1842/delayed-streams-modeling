@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSocketContext } from "../SocketContext";
 import { decodeMessage } from "../../../protocol/encoder";
+import { useSocketContext } from "../SocketContext";
 
 export const useServerText = () => {
   const [text, setText] = useState<string[]>([]);
@@ -31,7 +31,7 @@ export const useServerText = () => {
     return () => {
       currentSocket.removeEventListener("message", onSocketMessage);
     };
-  }, [socket]);
+  }, [socket, onSocketMessage]);
 
   return { text, textColor, totalTextMessages };
 };

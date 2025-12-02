@@ -1,4 +1,5 @@
-import { MutableRefObject, createContext, useContext } from "react";
+import { createContext, type MutableRefObject, useContext } from "react";
+
 type MediaContextType = {
   startRecording: () => void;
   stopRecording: () => void;

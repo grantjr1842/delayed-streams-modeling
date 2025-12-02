@@ -20,38 +20,38 @@ export type MODEL = keyof typeof MODELS_MAP;
 
 export type WSMessage =
   | {
-    type: "handshake";
-    version: VERSION;
-    model: MODEL;
-  }
+      type: "handshake";
+      version: VERSION;
+      model: MODEL;
+    }
   | {
-    type: "audio";
-    data: Uint8Array;
-  }
+      type: "audio";
+      data: Uint8Array;
+    }
   | {
-    type: "text";
-    data: string;
-  }
+      type: "text";
+      data: string;
+    }
   | {
-    type: "coloredtext";
-    color: number;
-    data: string;
-  }
+      type: "coloredtext";
+      color: number;
+      data: string;
+    }
   | {
-    type: "control";
-    action: CONTROL_MESSAGE;
-  }
+      type: "control";
+      action: CONTROL_MESSAGE;
+    }
   | {
-    type: "metadata";
-    data: unknown;
-  }
+      type: "metadata";
+      data: unknown;
+    }
   | {
-    type: "error";
-    data: string;
-  }
+      type: "error";
+      data: string;
+    }
   | {
-    type: "ping";
-  }
+      type: "ping";
+    };
 
 export const CONTROL_MESSAGES_MAP = {
   start: 0b00000000,

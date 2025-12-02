@@ -24,7 +24,7 @@ export interface AuthState {
 
 /**
  * Hook for managing authentication state in the Moshi client.
- * 
+ *
  * Provides:
  * - Current user and session information
  * - Loading state while checking authentication

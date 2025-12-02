@@ -75,7 +75,36 @@ moshi-server worker --config ...
   - Adjusts model paths to local cached assets.
   - Configures `BatchedAsr` with a safe initial batch size (e.g., 4 or 8), which is then auto-lowered by the server if needed.
 
-## 6. Building
+## 6. Logging
+
+The server uses `tracing` for structured logging with the following features:
+
+### Log Format
+- **Timestamps**: Human-readable format `YYYY-MM-DD HH:MM:SS.mmm` (e.g., `2025-12-02 01:36:42.113`)
+- **File output**: Clean text without ANSI color codes
+- **Console output**: Colored output for terminal readability
+
+### Log Rotation
+Logs are automatically rotated based on:
+- **Daily rotation**: New log file each day
+- **Size-based rotation**: Rotates when file exceeds `--log-max-size-mb` (default: 100 MB)
+- **File cleanup**: Keeps only `--log-max-files` rotated files (default: 10)
+
+Log files follow Debian-style naming: `log.instance`, `log.instance.1`, `log.instance.2`, etc.
+
+### CLI Options
+```bash
+moshi-server worker --config config.toml \
+  --log info \                    # Log level (trace, debug, info, warn, error)
+  --log-max-size-mb 100 \         # Max size per log file in MB
+  --log-max-files 10 \            # Max number of rotated log files to keep
+  --silent                        # Disable console output (file only)
+```
+
+### Log Directory
+Logs are written to the `log_dir` specified in the config file (e.g., `logs/moshi-server-rust/stt/`).
+
+## 7. Building
 
 To build the server with these changes:
 ```bash

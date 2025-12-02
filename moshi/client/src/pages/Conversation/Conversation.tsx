@@ -41,6 +41,7 @@ const buildURL = ({
 	workerAddr,
 	params,
 	workerAuthId,
+	sessionToken,
 	email,
 	textSeed,
 	audioSeed,
@@ -205,7 +206,7 @@ export const Conversation: FC<ConversationProps> = ({
 		return () => {
 			stop();
 		};
-	}, [start, workerAuthId]);
+	}, [start, stop]);
 
 	useEffect(() => {
 		if (!canvasRef) {
@@ -285,16 +286,7 @@ export const Conversation: FC<ConversationProps> = ({
 		mediaRecorder.current?.start();
 		audioRecorder.current.start();
 		isRecording.current = true;
-	}, [
-		isRecording,
-		setVideoURL,
-		setVideoURL,
-		worklet,
-		audioStreamDestination,
-		mediaRecorder,
-		audioRecorder,
-		canvasRef,
-	]);
+	}, [worklet]);
 
 	const stopRecording = useCallback(() => {
 		console.log("Stopping recording");
@@ -306,13 +298,7 @@ export const Conversation: FC<ConversationProps> = ({
 		audioRecorder.current.stop();
 		mediaRecorder.current?.stop();
 		isRecording.current = false;
-	}, [
-		isRecording,
-		worklet,
-		audioStreamDestination,
-		mediaRecorder,
-		audioRecorder,
-	]);
+	}, [worklet]);
 
 	return (
 		<SocketContext.Provider

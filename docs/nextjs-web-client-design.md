@@ -2,32 +2,451 @@
 
 ## Systems Design Document
 
-**Version:** 1.2.0  
+**Version:** 2.0.0  
 **Date:** December 2024  
-**Status:** Draft  
+**Status:** Final - Agent-Ready  
 **Reference Implementation:** `moshi/client/`  
 **Related Docs:** [BETTER_AUTH_INTEGRATION.md](./BETTER_AUTH_INTEGRATION.md), [MOSHI_SERVER_SETUP.md](./MOSHI_SERVER_SETUP.md)
 
 ---
 
+## 🤖 Agent Implementation Guide
+
+> **This section is designed for AI coding agents.** It provides explicit, ordered instructions for implementing the complete project from scratch.
+
+### Prerequisites Checklist
+
+Before starting implementation, verify:
+
+- [ ] Node.js 20+ installed
+- [ ] pnpm installed (`npm install -g pnpm`)
+- [ ] Empty repository created for the project
+- [ ] Access to `moshi/client/public/assets/` for decoder files
+
+### Phase 0: Project Initialization (Run These Commands First)
+
+```bash
+# 1. Initialize Next.js project (run in empty repo root)
+pnpm create next-app@latest ./ \
+  --typescript \
+  --react-compiler \
+  --tailwind \
+  --biome \
+  --app \
+  --no-src-dir \
+  --rspack \
+  --import-alias "@/*" \
+  --use-pnpm \
+  --yes
+
+# 2. Initialize shadcn/ui
+pnpm dlx shadcn@latest init -y
+
+# 3. Install all shadcn/ui components (single command)
+pnpm dlx shadcn@latest add button card dialog input label select slider switch badge tooltip sonner scroll-area separator skeleton progress tabs alert alert-dialog dropdown-menu sheet popover command avatar collapsible -y
+
+# 4. Install runtime dependencies
+pnpm add zustand nanoid opus-recorder webm-duration-fix better-auth @tanstack/react-query zod server-only client-only next-themes
+
+# 5. Install dev dependencies
+pnpm add -D vitest @vitejs/plugin-react jsdom @testing-library/react playwright @playwright/test
+
+# 6. Copy decoder assets (adjust source path as needed)
+mkdir -p public/assets
+cp ../moshi/client/public/assets/decoderWorker.min.js public/assets/
+cp ../moshi/client/public/assets/decoderWorker.min.wasm public/assets/
+```
+
+### Phase 1: File Creation Order (Critical - Follow Exactly)
+
+Files MUST be created in this order due to import dependencies:
+
+#### Layer 1: Types & Utilities (No Dependencies)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 1.1 | `types/audio.ts` | Audio-related TypeScript types |
+| 1.2 | `types/transcript.ts` | Transcript message types |
+| 1.3 | `types/websocket.ts` | WebSocket message types |
+| 1.4 | `types/settings.ts` | Settings types |
+| 1.5 | `lib/utils/cn.ts` | Tailwind class merge utility |
+| 1.6 | `lib/utils/format-time.ts` | Time formatting utilities |
+| 1.7 | `lib/utils/debounce.ts` | Debounce utility |
+| 1.8 | `lib/audio/constants.ts` | Audio constants (sample rate, buffer size) |
+| 1.9 | `lib/env.ts` | Environment variable validation |
+
+#### Layer 2: Protocol & Core Libraries (Depends on Layer 1)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 2.1 | `lib/protocol/types.ts` | Protocol message type definitions |
+| 2.2 | `lib/protocol/encoder.ts` | Binary protocol encoder/decoder |
+| 2.3 | `lib/websocket/types.ts` | WebSocket client types |
+| 2.4 | `lib/websocket/security.ts` | URL validation, auth helpers |
+| 2.5 | `lib/websocket/client.ts` | STTWebSocketClient class |
+| 2.6 | `lib/audio/audio-context.ts` | AudioContext factory (client-only) |
+| 2.7 | `lib/decoder/decoderWorker.ts` | Opus decoder worker loader |
+| 2.8 | `lib/auth/types.ts` | Auth type definitions |
+| 2.9 | `lib/auth/auth-client.ts` | Better Auth client config |
+
+#### Layer 3: State Management (Depends on Layer 2)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 3.1 | `lib/stores/audio-store.ts` | Audio state (Zustand) |
+| 3.2 | `lib/stores/transcript-store.ts` | Transcript state (Zustand) |
+| 3.3 | `lib/stores/connection-store.ts` | Connection state (Zustand) |
+
+#### Layer 4: Hooks (Depends on Layer 3)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 4.1 | `hooks/use-local-storage.ts` | localStorage persistence |
+| 4.2 | `hooks/use-audio-devices.ts` | Device enumeration |
+| 4.3 | `hooks/use-user-audio.ts` | Microphone capture with opus-recorder |
+| 4.4 | `hooks/use-audio-capture.ts` | Audio capture orchestration |
+| 4.5 | `hooks/use-websocket.ts` | WebSocket connection hook |
+| 4.6 | `hooks/use-transcript.ts` | Transcript state hook |
+| 4.7 | `hooks/use-auth.ts` | Authentication hook |
+
+#### Layer 5: UI Components (Depends on Layer 4)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 5.1 | `components/providers/theme-provider.tsx` | Theme provider wrapper |
+| 5.2 | `components/providers/query-provider.tsx` | React Query provider |
+| 5.3 | `components/providers/providers.tsx` | Combined providers |
+| 5.4 | `components/layout/theme-toggle.tsx` | Theme toggle button |
+| 5.5 | `components/layout/footer.tsx` | Footer (Server Component) |
+| 5.6 | `components/connection/connection-status.tsx` | Status badge |
+| 5.7 | `components/connection/server-config.tsx` | Config dialog |
+| 5.8 | `components/audio/vad-indicator.tsx` | VAD status |
+| 5.9 | `components/audio/device-selector.tsx` | Mic selector |
+| 5.10 | `components/audio/audio-meter.tsx` | Level meter |
+| 5.11 | `components/audio/audio-controls.tsx` | Record buttons |
+| 5.12 | `components/transcript/partial-text.tsx` | Live text |
+| 5.13 | `components/transcript/transcript-line.tsx` | Final text line |
+| 5.14 | `components/transcript/transcript-panel.tsx` | Main panel |
+| 5.15 | `components/layout/header.tsx` | Header with nav |
+
+#### Layer 6: Pages & API Routes (Depends on Layer 5)
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 6.1 | `app/globals.css` | Global styles with theme |
+| 6.2 | `app/layout.tsx` | Root layout |
+| 6.3 | `app/page.tsx` | Home page |
+| 6.4 | `app/api/health/route.ts` | Health check API |
+| 6.5 | `app/api/config/route.ts` | Config API |
+| 6.6 | `app/(routes)/settings/page.tsx` | Settings page |
+| 6.7 | `app/(routes)/history/page.tsx` | History page |
+
+#### Layer 7: Configuration Files
+
+| Order | File Path | Description |
+|-------|-----------|-------------|
+| 7.1 | `.env.example` | Environment template |
+| 7.2 | `tailwind.config.ts` | Tailwind with custom colors |
+| 7.3 | `middleware.ts` | Security headers |
+| 7.4 | `public/worklets/audio-processor.js` | AudioWorklet script |
+
+### Essential Constants Reference
+
+```typescript
+// lib/audio/constants.ts
+export const AUDIO_CONSTANTS = {
+  SAMPLE_RATE: 24000,           // Target sample rate for server
+  BUFFER_LENGTH: 960,           // Samples per buffer (960 = 24000 / 12.5 / 2)
+  ENCODER_FRAME_SIZE: 20,       // Opus frame size in ms
+  MAX_FRAMES_PER_PAGE: 2,       // Low latency setting
+  CHANNELS: 1,                  // Mono audio
+  ENCODER_APPLICATION: 2049,    // OPUS_APPLICATION_VOIP
+} as const;
+
+export const WS_CONSTANTS = {
+  MAX_RECONNECT_ATTEMPTS: 5,
+  RECONNECT_DELAY_MS: 1500,
+  INACTIVITY_TIMEOUT_MS: 10000,
+} as const;
+```
+
+### Binary Protocol Quick Reference
+
+```typescript
+// Message type bytes (first byte of each message)
+const MESSAGE_TYPES = {
+  HANDSHAKE: 0x00,    // [version, model]
+  AUDIO: 0x01,        // [opus_data...]
+  TEXT: 0x02,         // [utf8_text...]
+  CONTROL: 0x03,      // [action] (0=start, 1=endTurn, 2=pause, 3=restart)
+  METADATA: 0x04,     // [json_utf8...]
+  ERROR: 0x05,        // [utf8_message...]
+  PING: 0x06,         // (no payload)
+  COLORED_TEXT: 0x07, // [color, utf8_text...]
+} as const;
+```
+
+### Verification Commands
+
+After each phase, run these to verify:
+
+```bash
+# After Phase 0
+pnpm build  # Should complete without errors
+
+# After Layer 1-3
+pnpm tsc --noEmit  # Type check
+
+# After Layer 4-5
+pnpm dev  # Start dev server, check for import errors
+
+# After Layer 6-7
+pnpm build && pnpm start  # Full production build
+```
+
+### Common Pitfalls & Solutions
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| `'use client'` error in Server Component | Importing client hook in server file | Move hook usage to a Client Component wrapper |
+| `window is not defined` | Browser API used during SSR | Wrap in `useEffect` or use `'use client'` |
+| `Module not found: @/lib/...` | File not created yet | Follow Layer order exactly |
+| AudioWorklet not loading | Wrong path or CORS | Ensure file is in `public/worklets/` |
+| WebSocket auth fails | Missing token in URL | Check `buildAuthenticatedWsUrl()` |
+| Opus encoder error | Missing WASM files | Copy decoder assets to `public/assets/` |
+| Hydration mismatch | Theme/state differs server vs client | Use `mounted` state pattern |
+| `clsx` not found | Missing dependency | Run `pnpm add clsx tailwind-merge` |
+
+### Implementation Completion Checklist
+
+Use this to verify all critical files exist:
+
+```bash
+# Run this script to check file existence
+files=(
+  "lib/utils/cn.ts"
+  "lib/audio/constants.ts"
+  "lib/protocol/encoder.ts"
+  "lib/websocket/client.ts"
+  "lib/stores/audio-store.ts"
+  "lib/stores/transcript-store.ts"
+  "lib/stores/connection-store.ts"
+  "lib/auth/auth-client.ts"
+  "hooks/use-user-audio.ts"
+  "hooks/use-websocket.ts"
+  "hooks/use-auth.ts"
+  "components/providers/providers.tsx"
+  "components/audio/audio-controls.tsx"
+  "components/transcript/transcript-panel.tsx"
+  "components/layout/header.tsx"
+  "app/layout.tsx"
+  "app/page.tsx"
+  "public/assets/decoderWorker.min.js"
+  "public/assets/decoderWorker.min.wasm"
+)
+
+for f in "${files[@]}"; do
+  [ -f "$f" ] && echo "✓ $f" || echo "✗ $f MISSING"
+done
+```
+
+### Key Integration Points
+
+When implementing, pay special attention to these integration points:
+
+1. **WebSocket ↔ Transcript Store**: Messages from `STTWebSocketClient.onMessage` must update `transcript-store`
+2. **Audio Capture ↔ WebSocket**: `useUserAudio.onDataChunk` must call `sendMessage({ type: 'audio', data })`
+3. **Auth ↔ WebSocket**: `useAuth.getSessionToken()` must be passed to WebSocket URL builder
+4. **Stores ↔ Components**: All UI components subscribe to stores via hooks, not props
+5. **Theme ↔ Layout**: `ThemeProvider` must wrap entire app in `layout.tsx`
+
+---
+
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
-2. [User Stories & Personas](#user-stories--personas)
-3. [System Architecture](#system-architecture)
-4. [Technical Requirements](#technical-requirements)
-5. [Frontend Architecture](#frontend-architecture)
-6. [Backend Architecture](#backend-architecture)
-7. [WebSocket Protocol Integration](#websocket-protocol-integration)
-8. [Audio Pipeline Design](#audio-pipeline-design)
-9. [UI/UX Design](#uiux-design)
-10. [Security Considerations](#security-considerations)
-11. [Performance Optimization](#performance-optimization)
-12. [Testing Strategy](#testing-strategy)
-13. [Deployment Strategy](#deployment-strategy)
-14. [GitHub Issues & Branches](#github-issues--branches)
-15. [Implementation Timeline](#implementation-timeline)
-16. [Existing Moshi Client Implementation Reference](#existing-moshi-client-implementation-reference)
+1. [🤖 Agent Implementation Guide](#-agent-implementation-guide) ⬆️ *Start Here*
+2. [Quick Reference](#quick-reference)
+3. [Executive Summary](#executive-summary)
+4. [User Stories & Personas](#user-stories--personas)
+5. [System Architecture](#system-architecture)
+6. [Technical Requirements](#technical-requirements)
+7. [Frontend Architecture](#frontend-architecture)
+8. [Backend Architecture](#backend-architecture)
+9. [WebSocket Protocol Integration](#websocket-protocol-integration)
+10. [Audio Pipeline Design](#audio-pipeline-design)
+11. [UI/UX Design](#uiux-design)
+12. [Security Considerations](#security-considerations)
+13. [Performance Optimization](#performance-optimization)
+14. [Testing Strategy](#testing-strategy)
+15. [Deployment Strategy](#deployment-strategy)
+16. [GitHub Issues & Branches](#github-issues--branches)
+17. [Implementation Timeline](#implementation-timeline)
+18. [Existing Moshi Client Implementation Reference](#existing-moshi-client-implementation-reference)
+
+---
+
+## Quick Reference
+
+> **Copy-paste ready snippets for common implementation tasks.**
+
+### Minimal Working Store (Zustand Template)
+
+```typescript
+// lib/stores/[name]-store.ts
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+interface ExampleState {
+  value: string;
+  setValue: (v: string) => void;
+}
+
+export const useExampleStore = create<ExampleState>()(
+  persist(
+    (set) => ({
+      value: '',
+      setValue: (value) => set({ value }),
+    }),
+    { name: 'example-storage' }
+  )
+);
+```
+
+### Minimal Client Component Template
+
+```tsx
+// components/example/example.tsx
+'use client';
+
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils/cn';
+
+interface ExampleProps {
+  className?: string;
+}
+
+export function Example({ className }: ExampleProps) {
+  const [state, setState] = useState(false);
+  
+  return (
+    <div className={cn('', className)}>
+      <Button onClick={() => setState(!state)}>
+        Toggle
+      </Button>
+    </div>
+  );
+}
+```
+
+### Minimal Server Component Template
+
+```tsx
+// components/example/server-example.tsx
+// NO 'use client' directive - this is a Server Component
+
+import { cn } from '@/lib/utils/cn';
+
+interface ServerExampleProps {
+  data: string;
+  className?: string;
+}
+
+export function ServerExample({ data, className }: ServerExampleProps) {
+  return (
+    <div className={cn('', className)}>
+      {data}
+    </div>
+  );
+}
+```
+
+### Minimal API Route Template
+
+```typescript
+// app/api/example/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  return NextResponse.json({ status: 'ok' });
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const body = await request.json();
+  return NextResponse.json({ received: body }, { status: 201 });
+}
+```
+
+### Minimal Hook Template
+
+```typescript
+// hooks/use-example.ts
+'use client';
+
+import { useState, useCallback, useEffect } from 'react';
+
+export function useExample() {
+  const [state, setState] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const doSomething = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      // async operation
+      setState('result');
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('Unknown error'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return { state, isLoading, error, doSomething };
+}
+```
+
+### cn() Utility (Required First)
+
+```typescript
+// lib/utils/cn.ts
+import { type ClassValue, clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+```
+
+### Environment Variables (.env.example)
+
+```env
+# Required
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+DEFAULT_STT_URL=wss://stt.fullen.dev/api/asr-streaming
+
+# Optional - Authentication
+NEXT_PUBLIC_AUTH_URL=
+BETTER_AUTH_SECRET=
+
+# Optional - Features
+FEATURE_HISTORY=true
+FEATURE_EXPORT=true
+
+# Optional - Database
+DATABASE_URL=
+```
+
+### Import Path Conventions
+
+| Import | Resolves To |
+|--------|-------------|
+| `@/components/*` | `./components/*` |
+| `@/lib/*` | `./lib/*` |
+| `@/hooks/*` | `./hooks/*` |
+| `@/types/*` | `./types/*` |
+| `@/app/*` | `./app/*` |
 
 ---
 
@@ -5988,52 +6407,12 @@ export function Header() {
 
 #### 11. ThemeToggle Component
 
-**File:** `components/theme-toggle.tsx`  
+**File:** `components/layout/theme-toggle.tsx`  
 **shadcn/ui deps:** Button, DropdownMenu
 
-```tsx
-'use client';
-
-import { useTheme } from 'next-themes';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Sun, Moon, Laptop } from 'lucide-react';
-
-export function ThemeToggle() {
-  const { setTheme, theme } = useTheme();
-  
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-          <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-          <span className="sr-only">Toggle theme</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => setTheme('light')}>
-          <Sun className="mr-2 h-4 w-4" />
-          Light
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('dark')}>
-          <Moon className="mr-2 h-4 w-4" />
-          Dark
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('system')}>
-          <Laptop className="mr-2 h-4 w-4" />
-          System
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-```
+> **See full implementation:** [Theme Toggle Component](#theme-toggle-component) in the UI/UX Design section above. Two variants are provided:
+> - `ThemeToggle` - Dropdown with Light/Dark/System options
+> - `ThemeToggleSimple` - Single button toggle
 
 #### 12. Footer Component
 
@@ -7865,6 +8244,15 @@ From `moshi/client/package.json`:
 - High contrast mode support
 - Reduced motion support
 
+### D. Document Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.0.0 | Dec 2024 | Added Agent Implementation Guide, Quick Reference, file creation order, pitfalls table |
+| 1.2.0 | Dec 2024 | Added Moshi client reference, Better Auth integration |
+| 1.1.0 | Dec 2024 | Added UI/UX design, component specifications |
+| 1.0.0 | Dec 2024 | Initial systems design document |
+
 ---
 
-*Document maintained by the development team. Last updated: December 2024.*
+*Document optimized for AI coding agents. Version 2.0.0 - December 2024.*

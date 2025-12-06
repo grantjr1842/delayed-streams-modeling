@@ -4,6 +4,7 @@
 
 use crate::asr::{InMsg, OutMsg};
 use crate::metrics::asr as metrics;
+use crate::metrics::warmup as warmup_metrics;
 use crate::AsrStreamingQuery as Query;
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -13,6 +14,7 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::task;
 use tokio::time::{timeout, Duration};
+use std::time::Instant;
 
 const FRAME_SIZE: usize = 1920;
 const SEND_PING_EVERY: Duration = Duration::from_secs(10);
@@ -191,6 +193,7 @@ impl BatchedAsrInner {
         conditioning_learnt_padding: bool,
         batch_size: usize,
         logger: Option<&Logger>,
+        warmup_enabled: bool,
     ) -> Result<()> {
         let conditions = match self.lm.condition_provider() {
             None => None,
@@ -223,8 +226,27 @@ impl BatchedAsrInner {
         let log_tx = logger.map(|v| v.log_tx.clone());
         let dev = state.device().clone();
         crate::utils::spawn_blocking("model_loop", move || {
-            tracing::info!("warming-up the asr");
-            warmup(&mut state, conditions.as_ref())?;
+            if warmup_enabled {
+                let start = Instant::now();
+                tracing::info!("warming-up the asr");
+                let res = warmup(&mut state, conditions.as_ref());
+                let elapsed = start.elapsed().as_secs_f64();
+                warmup_metrics::DURATION.observe(elapsed);
+                match &res {
+                    Ok(_) => {
+                        warmup_metrics::SUCCESS.inc();
+                        tracing::info!(duration_ms = (elapsed * 1000.0), "warmup completed");
+                    }
+                    Err(err) => {
+                        warmup_metrics::FAILURE.inc();
+                        tracing::error!(duration_ms = (elapsed * 1000.0), ?err, "warmup failed");
+                    }
+                }
+                res?;
+            } else {
+                tracing::info!("skipping warmup (disabled)");
+                warmup_metrics::SKIPPED.inc();
+            }
             tracing::info!("starting asr loop {batch_size}");
             // Store the markers in a double ended queue
             let mut markers = BinaryHeap::new();
@@ -449,6 +471,7 @@ impl BatchedAsr {
         asr: &crate::AsrConfig,
         config: &crate::Config,
         dev: &Device,
+        warmup_enabled: bool,
     ) -> Result<Self> {
         let dtype = crate::utils::model_dtype(asr.dtype_override.as_deref(), dev)?;
         let vb_lm =
@@ -494,6 +517,7 @@ impl BatchedAsr {
             asr.conditioning_learnt_padding,
             batch_size,
             logger.as_ref(),
+            warmup_enabled,
         )?;
         if let Some(logger) = logger {
             logger.log_loop()

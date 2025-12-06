@@ -3,6 +3,7 @@ log_dir = "logs/moshi-server-rust/stt"
 instance_name = "config-stt-en-hf"
 # authorized_ids can be set here or via MOSHI_API_KEY environment variable (comma-separated)
 authorized_ids = []
+warmup = { enabled = true } # eager warmup at startup (set false to skip)
 
 [modules.asr]
 path = "/api/asr-streaming"

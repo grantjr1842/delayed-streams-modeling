@@ -109,3 +109,30 @@ pub mod py_post {
         .unwrap();
     }
 }
+
+pub mod warmup {
+    use super::*;
+    lazy_static! {
+        pub static ref DURATION: Histogram = register_histogram!(histogram_opts!(
+            "warmup_duration_seconds",
+            "Warmup duration across modules.",
+            vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+        ))
+        .unwrap();
+        pub static ref SUCCESS: Counter = register_counter!(opts!(
+            "warmup_success_total",
+            "Number of successful warmup executions."
+        ))
+        .unwrap();
+        pub static ref FAILURE: Counter = register_counter!(opts!(
+            "warmup_failure_total",
+            "Number of failed warmup executions."
+        ))
+        .unwrap();
+        pub static ref SKIPPED: Counter = register_counter!(opts!(
+            "warmup_skipped_total",
+            "Number of warmup executions skipped (disabled)."
+        ))
+        .unwrap();
+    }
+}

@@ -111,3 +111,23 @@ To build the server with these changes:
 cd moshi/rust/moshi-server
 cargo install --path . --features cuda --force
 ```
+
+## 8. Warmup Behavior & Observability
+
+- **Config toggle**: Warmup is controlled by the top-level `[warmup]` block in the TOML config and is **enabled by default**.
+  ```toml
+  [warmup]
+  enabled = true  # set to false to skip eager warmup
+  ```
+- **What runs**:
+  - `Asr` and `Tts` modules run a one-time warmup at startup.
+  - `BatchedAsr` warms up inside its model loop using the same toggle.
+  - Other modules currently skip warmup.
+  - TTS skips warmup automatically if no voices are configured.
+- **Logging**: On startup, each warmed module logs start/end and duration; failures are logged with errors, and skips are logged when warmup is disabled.
+- **Metrics** (Prometheus):
+  - `warmup_duration_seconds` (histogram)
+  - `warmup_success_total`
+  - `warmup_failure_total`
+  - `warmup_skipped_total`
+- **When to disable**: If startup time is critical or running on limited resources, set `warmup.enabled = false` to start serving immediately (metrics will record the skip).

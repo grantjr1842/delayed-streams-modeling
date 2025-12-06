@@ -91,6 +91,12 @@ pub struct AuthConfig {
     pub jwt_secret: Option<String>,
 }
 
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self { authorized_ids: HashSet::new(), jwt_secret: None }
+    }
+}
+
 impl AuthConfig {
     /// Load authentication configuration from environment
     pub fn from_env(mut authorized_ids: HashSet<String>) -> Self {

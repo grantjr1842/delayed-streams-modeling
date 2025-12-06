@@ -10,6 +10,7 @@ use axum::{
 };
 use candle::Device;
 use std::str::FromStr;
+use std::time::Instant;
 use std::sync::Arc;
 
 mod asr;
@@ -158,6 +159,23 @@ pub struct PyPostConfig {
     pub py: Option<toml::Table>,
 }
 
+fn default_warmup_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WarmupConfig {
+    /// Enable or disable eager warmup for supported modules.
+    #[serde(default = "default_warmup_enabled")]
+    pub enabled: bool,
+}
+
+impl Default for WarmupConfig {
+    fn default() -> Self {
+        Self { enabled: default_warmup_enabled() }
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type")]
 pub enum ModuleConfig {
@@ -211,8 +229,14 @@ pub struct Config {
     pub log_dir: String,
     pub instance_name: String,
     #[serde(default)]
+    pub warmup: WarmupConfig,
+    #[serde(default)]
     pub modules: std::collections::HashMap<String, ModuleConfig>,
     pub authorized_ids: std::collections::HashSet<String>,
+    /// Authentication configuration derived from file + environment.
+    #[serde(skip)]
+    #[serde(default)]
+    pub auth: auth::AuthConfig,
 }
 
 impl Config {
@@ -221,15 +245,10 @@ impl Config {
         let config = std::fs::read_to_string(p)?;
         let mut config: Self = toml::from_str(&config)?;
 
-        // Load authorized IDs from environment variable
-        if let Ok(env_keys) = std::env::var("MOSHI_API_KEY") {
-            for key in env_keys.split(',') {
-                let key = key.trim();
-                if !key.is_empty() {
-                    config.authorized_ids.insert(key.to_string());
-                }
-            }
-        }
+        // Derive auth config from file + environment.
+        let auth_cfg = auth::AuthConfig::from_env(config.authorized_ids.clone());
+        config.authorized_ids = auth_cfg.authorized_ids.clone();
+        config.auth = auth_cfg;
 
         for (_, c) in config.modules.iter_mut() {
             match c {
@@ -353,7 +372,50 @@ fn lm_router(s: Arc<lm::Lm>, path: &str) -> axum::Router<()> {
 }
 
 impl Module {
-    fn new(module_cfg: &ModuleConfig, full_cfg: &Config, dev: &Device) -> Result<Self> {
+    fn run_warmup<F>(
+        module: &str,
+        path: &str,
+        warmup_cfg: &WarmupConfig,
+        warmup_fn: F,
+    ) -> Result<()>
+    where
+        F: FnOnce() -> Result<()>,
+    {
+        use crate::metrics::warmup as warmup_metrics;
+
+        if !warmup_cfg.enabled {
+            tracing::info!(module, path, "skipping warmup (disabled)");
+            warmup_metrics::SKIPPED.inc();
+            return Ok(());
+        }
+
+        let start = Instant::now();
+        tracing::info!(module, path, "starting warmup");
+        let res = warmup_fn();
+        let elapsed = start.elapsed().as_secs_f64();
+
+        match &res {
+            Ok(_) => {
+                warmup_metrics::DURATION.observe(elapsed);
+                warmup_metrics::SUCCESS.inc();
+                tracing::info!(module, path, duration_ms = (elapsed * 1000.0), "warmup completed");
+            }
+            Err(err) => {
+                warmup_metrics::DURATION.observe(elapsed);
+                warmup_metrics::FAILURE.inc();
+                tracing::error!(module, path, duration_ms = (elapsed * 1000.0), ?err, "warmup failed");
+            }
+        }
+
+        res
+    }
+
+    fn new(
+        module_cfg: &ModuleConfig,
+        full_cfg: &Config,
+        dev: &Device,
+        warmup_cfg: &WarmupConfig,
+    ) -> Result<Self> {
         let m = match module_cfg {
             ModuleConfig::Lm { path, config } => {
                 let m = lm::Lm::new(config, full_cfg, dev)?;
@@ -363,13 +425,17 @@ impl Module {
             ModuleConfig::Asr { path, config } => {
                 let m = asr::Asr::new(config, full_cfg, dev)?;
                 let m = Arc::new(m);
-                tracing::info!("warming up the asr");
-                m.warmup()?;
-                tracing::info!("done warming up the asr, ready to roll!");
+                Self::run_warmup("asr", path, warmup_cfg, || m.warmup())?;
                 Self::Asr { m, path: path.to_string() }
             }
             ModuleConfig::BatchedAsr { path, config, batch_size } => {
-                let m = batched_asr::BatchedAsr::new(*batch_size, config, full_cfg, dev)?;
+                let m = batched_asr::BatchedAsr::new(
+                    *batch_size,
+                    config,
+                    full_cfg,
+                    dev,
+                    warmup_cfg.enabled,
+                )?;
                 let m = Arc::new(m);
                 Self::BatchedAsr { m, path: path.to_string() }
             }
@@ -383,19 +449,24 @@ impl Module {
                 let m = tts::Model::new(config, full_cfg, dev)?;
                 let m = Arc::new(m);
                 if let Some(voice) = voice {
-                    tracing::info!(voice, "warming up the tts");
-                    m.run(&TtsQuery {
-                        text: vec!["hello".to_string()],
-                        seed: 42,
-                        temperature: 0.8,
-                        top_k: 250,
-                        voice: Some(voice.clone()),
-                        voices: None,
-                        max_seq_len: None,
-                        return_timestamps: None,
-                        cfg_alpha: None,
+                    let voice = voice.clone();
+                    Self::run_warmup("tts", path, warmup_cfg, || {
+                        m.run(&TtsQuery {
+                            text: vec!["hello".to_string()],
+                            seed: 42,
+                            temperature: 0.8,
+                            top_k: 250,
+                            voice: Some(voice.clone()),
+                            voices: None,
+                            max_seq_len: None,
+                            return_timestamps: None,
+                            cfg_alpha: None,
+                        })
+                        .map(|_| ())
+                        .map_err(Into::into)
                     })?;
-                    tracing::info!("done warming up the tts, ready to roll!");
+                } else {
+                    tracing::info!(path, "skipping tts warmup (no voices configured)");
                 }
                 Self::Tts { m, path: path.to_string() }
             }
@@ -456,7 +527,7 @@ impl AppStateInner {
 
         let mut modules = Vec::with_capacity(config.modules.len());
         for (_, module_cfg) in config.modules.iter() {
-            let m = Module::new(module_cfg, &config, &device)?;
+            let m = Module::new(module_cfg, &config, &device, &config.warmup)?;
             modules.push(m)
         }
         Ok(Self { modules })
@@ -835,6 +906,72 @@ struct TtsResponse {
     transcript: Vec<crate::tts::WordWithTimestamps>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::warmup as warmup_metrics;
+    use std::sync::{Mutex, OnceLock};
+
+    fn metric_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn warmup_success_increments_success_counter() {
+        let _guard = metric_lock();
+        let before = warmup_metrics::SUCCESS.get();
+        Module::run_warmup(
+            "asr",
+            "/asr",
+            &WarmupConfig { enabled: true },
+            || -> anyhow::Result<()> { Ok(()) },
+        )
+        .unwrap();
+        let after = warmup_metrics::SUCCESS.get();
+        assert!(
+            (after - before - 1.0).abs() < f64::EPSILON,
+            "expected success counter to increment by 1 (before {before}, after {after})"
+        );
+    }
+
+    #[test]
+    fn warmup_failure_increments_failure_counter() {
+        let _guard = metric_lock();
+        let before = warmup_metrics::FAILURE.get();
+        let res = Module::run_warmup(
+            "asr",
+            "/asr",
+            &WarmupConfig { enabled: true },
+            || -> anyhow::Result<()> { anyhow::bail!("boom") },
+        );
+        assert!(res.is_err(), "expected warmup to fail");
+        let after = warmup_metrics::FAILURE.get();
+        assert!(
+            (after - before - 1.0).abs() < f64::EPSILON,
+            "expected failure counter to increment by 1 (before {before}, after {after})"
+        );
+    }
+
+    #[test]
+    fn warmup_skipped_increments_skipped_counter() {
+        let _guard = metric_lock();
+        let before = warmup_metrics::SKIPPED.get();
+        Module::run_warmup(
+            "tts",
+            "/tts",
+            &WarmupConfig { enabled: false },
+            || -> anyhow::Result<()> { Ok(()) },
+        )
+        .unwrap();
+        let after = warmup_metrics::SKIPPED.get();
+        assert!(
+            (after - before - 1.0).abs() < f64::EPSILON,
+            "expected skipped counter to increment by 1 (before {before}, after {after})"
+        );
+    }
+}
+
 fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<()> {
     use base64::Engine;
 
@@ -855,8 +992,13 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         req: axum::Json<TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts query {req:?}");
-        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
-            return Ok(code.into_response());
+        match auth::check_with_user(&headers, None, &state.0 .1.config.authorized_ids) {
+            Ok(claims) => {
+                if let Some(c) = claims {
+                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
+                }
+            }
+            Err(code) => return Ok(code.into_response()),
         }
         let (wav, transcript) = {
             let _guard = state.0 .0.mutex.lock().await;
@@ -886,8 +1028,13 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(code.into_response());
+        match auth::check_with_user(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            Ok(claims) => {
+                if let Some(c) = claims {
+                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
+                }
+            }
+            Err(code) => return Ok(code.into_response()),
         }
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();

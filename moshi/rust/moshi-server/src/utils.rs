@@ -603,6 +603,7 @@ pub fn get_available_vram() -> Result<u64> {
 }
 
 #[cfg(not(feature = "cuda"))]
+#[allow(dead_code)]
 pub fn get_available_vram() -> Result<u64> {
     anyhow::bail!("CUDA not available")
 }

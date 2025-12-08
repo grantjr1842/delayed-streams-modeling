@@ -145,3 +145,33 @@ cargo install --path . --features cuda --force
   - `warmup_failure_total`
   - `warmup_skipped_total`
 - **When to disable**: If startup time is critical or running on limited resources, set `warmup.enabled = false` to start serving immediately (metrics will record the skip).
+
+## 9. WebSocket Close Codes
+
+The server uses RFC 6455 standard close codes plus custom application codes (4000-4999) to provide meaningful error information to clients.
+
+### Standard Codes (RFC 6455)
+| Code | Name | Description |
+|------|------|-------------|
+| 1000 | Normal | Normal closure |
+| 1001 | GoingAway | Server shutting down |
+| 1002 | ProtocolError | Protocol error |
+| 1011 | InternalError | Internal server error |
+
+### Custom Application Codes
+| Code | Name | Description | Retryable |
+|------|------|-------------|-----------|
+| 4000 | ServerAtCapacity | No free channels available | Yes |
+| 4001 | AuthenticationFailed | Invalid or missing credentials | No |
+| 4002 | SessionTimeout | Connection exceeded maximum duration | Yes |
+| 4003 | InvalidMessage | Failed to parse client message | No |
+| 4004 | RateLimited | Too many requests | Yes |
+| 4005 | ResourceUnavailable | Requested resource not found | No |
+| 4006 | ClientTimeout | No data received within expected timeframe | Yes |
+
+### Client Handling
+Clients should:
+1. Check the close code when a WebSocket connection closes
+2. For retryable errors (4000, 4002, 4004, 4006), implement exponential backoff retry
+3. For non-retryable errors (4001, 4003, 4005), display an error message to the user
+4. The close frame includes a human-readable reason string for debugging

@@ -4,6 +4,7 @@
 
 use crate::asr::{InMsg, OutMsg};
 use crate::metrics::asr as metrics;
+use crate::metrics::errors as error_metrics;
 use crate::metrics::warmup as warmup_metrics;
 use crate::protocol::CloseCode;
 use crate::AsrStreamingQuery as Query;
@@ -599,7 +600,12 @@ impl BatchedAsr {
         let (batch_idx, in_tx, mut out_rx) = match self.channels()? {
             Some(v) => v,
             None => {
-                tracing::error!("no free channels - server at capacity");
+                tracing::error!(
+                    error_type = "capacity",
+                    module = "batched_asr",
+                    "no free channels - server at capacity"
+                );
+                error_metrics::record_connection_error("capacity", "batched_asr");
                 // Send error message in protocol format
                 let mut msg = vec![];
                 OutMsg::Error { message: "Server at capacity - no free channels available".into() }.serialize(

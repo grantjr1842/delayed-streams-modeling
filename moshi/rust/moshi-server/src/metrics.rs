@@ -138,18 +138,57 @@ pub mod warmup {
     }
 }
 
-pub mod auth {
-    use super::*;
+pub mod errors {
+    use prometheus::{register_int_counter_vec, IntCounterVec};
+    use lazy_static::lazy_static;
+
     lazy_static! {
-        /// Counter for authentication errors by error type
+        /// WebSocket close events by close code.
+        /// Labels: code (numeric), reason (category name)
+        pub static ref WS_CLOSE_TOTAL: IntCounterVec = register_int_counter_vec!(
+            "ws_close_total",
+            "Total WebSocket close events by close code.",
+            &["code", "reason"]
+        )
+        .unwrap();
+
+        /// Connection errors by error type.
+        /// Labels: error_type (capacity, timeout, protocol, internal)
+        pub static ref CONNECTION_ERROR_TOTAL: IntCounterVec = register_int_counter_vec!(
+            "connection_error_total",
+            "Total connection errors by type.",
+            &["error_type", "module"]
+        )
+        .unwrap();
+
+        /// Authentication errors by error type.
         /// Labels: error_type (invalid_key, expired_token, missing_credentials, jwt_validation_failed)
-        pub static ref ERROR_TOTAL: CounterVec = register_counter_vec!(
-            opts!(
-                "auth_error_total",
-                "Total number of authentication errors by type."
-            ),
+        pub static ref AUTH_ERROR_TOTAL: IntCounterVec = register_int_counter_vec!(
+            "auth_error_total",
+            "Total authentication errors by type.",
             &["error_type"]
         )
         .unwrap();
+    }
+
+    /// Record a WebSocket close event.
+    #[allow(dead_code)]
+    pub fn record_ws_close(code: u16, reason: &str) {
+        let code_str = code.to_string();
+        WS_CLOSE_TOTAL
+            .with_label_values(&[code_str.as_str(), reason])
+            .inc();
+    }
+
+    /// Record a connection error.
+    pub fn record_connection_error(error_type: &str, module: &str) {
+        CONNECTION_ERROR_TOTAL
+            .with_label_values(&[error_type, module])
+            .inc();
+    }
+
+    /// Record an authentication error.
+    pub fn record_auth_error(error_type: &str) {
+        AUTH_ERROR_TOTAL.with_label_values(&[error_type]).inc();
     }
 }

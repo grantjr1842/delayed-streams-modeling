@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use crate::metrics;
+use crate::metrics::errors as error_metrics;
 
 /// Header for legacy API key authentication
 pub const ID_HEADER: &str = "kyutai-api-key";
@@ -117,9 +117,7 @@ impl AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         // Increment Prometheus counter with error type label
-        metrics::auth::ERROR_TOTAL
-            .with_label_values(&[self.error_type()])
-            .inc();
+        error_metrics::record_auth_error(self.error_type());
 
         (StatusCode::UNAUTHORIZED, Json(self)).into_response()
     }

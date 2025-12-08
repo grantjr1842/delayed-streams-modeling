@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { authClient, getSession } from "../lib/auth-client";
+import { authClient, getSession } from "../utils/auth-client";
 
 export interface User {
   id: string;

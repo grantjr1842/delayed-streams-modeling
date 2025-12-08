@@ -62,6 +62,71 @@ stt.fullen.dev {
 }
 ```
 
+## Deployment
+
+### Quick Deploy
+
+Run the deployment script to install/update the Caddyfile and systemd configuration:
+
+```bash
+sudo ./scripts/deploy-caddy.sh
+```
+
+This script:
+1. Copies `Caddyfile` to `/etc/caddy/Caddyfile`
+2. Installs systemd override for auto-restart on failure
+3. Validates the Caddyfile syntax
+4. Reloads Caddy gracefully (no downtime)
+
+### Manual Deployment
+
+If you prefer manual steps:
+
+```bash
+# Copy Caddyfile
+sudo cp Caddyfile /etc/caddy/Caddyfile
+
+# Install systemd override for auto-restart
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+sudo cp systemd/caddy.service.d/override.conf /etc/systemd/system/caddy.service.d/
+
+# Reload systemd and Caddy
+sudo systemctl daemon-reload
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+## Systemd Service Management
+
+Caddy runs as a systemd service with auto-restart enabled:
+
+```bash
+# Check status
+sudo systemctl status caddy
+
+# View logs
+sudo journalctl -u caddy -f
+
+# Restart service
+sudo systemctl restart caddy
+
+# Enable on boot (usually already enabled)
+sudo systemctl enable caddy
+```
+
+### Auto-Restart Configuration
+
+The systemd override (`/etc/systemd/system/caddy.service.d/override.conf`) configures:
+- **Restart=on-failure**: Automatically restart if Caddy crashes
+- **RestartSec=5s**: Wait 5 seconds before restarting
+- **WatchdogSec=30s**: Restart if Caddy becomes unresponsive
+
+Verify the configuration:
+```bash
+systemctl show caddy --property=Restart,RestartSec,WatchdogSec
+# Expected: Restart=on-failure, RestartSec=5s, WatchdogSec=30s
+```
+
 ## Running
 
 1. **Start Moshi Server**:
@@ -79,17 +144,19 @@ stt.fullen.dev {
    pnpm dev  # Runs on port 3001
    ```
 
-3. **Start Caddy**:
+3. **Ensure Caddy is running**:
    
+   Caddy should already be running as a systemd service. Verify with:
    ```bash
-   # Run in foreground (useful for testing)
-   sudo caddy run
-
-   # Or start as a background service
-   sudo caddy start
+   sudo systemctl status caddy
    ```
 
-Caddy will automatically provision and renew SSL certificates for `stt.fullen.dev` via Let's Encrypt.
+   If not running, start it:
+   ```bash
+   sudo systemctl start caddy
+   ```
+
+Caddy automatically provisions and renews SSL certificates for both `transcribe.fullen.dev` and `stt.fullen.dev` via Let's Encrypt. Certificates are stored in `/var/lib/caddy/.local/share/caddy/certificates/`.
 
 ## Verification
 

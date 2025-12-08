@@ -4,9 +4,10 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    histogram_opts, labels, opts, register_counter, register_gauge, register_histogram,
+    histogram_opts, labels, opts, register_counter, register_counter_vec, register_gauge,
+    register_histogram,
 };
-use prometheus::{Counter, Gauge, Histogram};
+use prometheus::{Counter, CounterVec, Gauge, Histogram};
 
 pub mod asr {
     use super::*;
@@ -133,6 +134,22 @@ pub mod warmup {
             "warmup_skipped_total",
             "Number of warmup executions skipped (disabled)."
         ))
+        .unwrap();
+    }
+}
+
+pub mod auth {
+    use super::*;
+    lazy_static! {
+        /// Counter for authentication errors by error type
+        /// Labels: error_type (invalid_key, expired_token, missing_credentials, jwt_validation_failed)
+        pub static ref ERROR_TOTAL: CounterVec = register_counter_vec!(
+            opts!(
+                "auth_error_total",
+                "Total number of authentication errors by type."
+            ),
+            &["error_type"]
+        )
         .unwrap();
     }
 }

@@ -20,6 +20,7 @@ candle-nn = { workspace = true }
 chrono = { workspace = true }
 candle-transformers = { workspace = true }
 clap = { workspace = true }
+dotenvy = { workspace = true }
 futures-util = { workspace = true }
 hf-hub = { workspace = true }
 jsonwebtoken = { workspace = true }

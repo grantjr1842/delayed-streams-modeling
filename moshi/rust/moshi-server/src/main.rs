@@ -661,6 +661,9 @@ async fn main() {
 }
 
 async fn main_() -> Result<()> {
+    // Load .env file if present (before parsing args so env vars are available)
+    dotenvy::dotenv().ok();
+
     let args = <Args as clap::Parser>::parse();
     match args.command {
         Command::Configs { which } => match which.as_str() {

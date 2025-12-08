@@ -175,3 +175,64 @@ Clients should:
 2. For retryable errors (4000, 4002, 4004, 4006), implement exponential backoff retry
 3. For non-retryable errors (4001, 4003, 4005), display an error message to the user
 4. The close frame includes a human-readable reason string for debugging
+
+## 10. Server Status & Health Endpoints
+
+### GET /api/status
+
+Returns comprehensive server status including capacity, uptime, and configuration.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "uptime_seconds": 3600,
+  "started_at": "2025-12-08T23:00:00Z",
+  "build": {
+    "build_timestamp": "2025-12-08T22:00:00Z",
+    "git_hash": "abc123...",
+    "rustc_version": "1.75.0"
+  },
+  "capacity": {
+    "total_slots": 8,
+    "used_slots": 3,
+    "available_slots": 5,
+    "modules": [
+      {
+        "name": "/api/asr-streaming",
+        "module_type": "batched_asr",
+        "total_slots": 8,
+        "used_slots": 3,
+        "available_slots": 5
+      }
+    ]
+  },
+  "auth": {
+    "api_key_configured": true,
+    "better_auth_enabled": false
+  }
+}
+```
+
+**Status Values:**
+- `healthy` - Server is operational with available capacity
+- `degraded` - Server is at capacity (no available slots)
+
+### GET /api/health
+
+Simple health check endpoint for load balancers and monitoring.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "uptime_seconds": 3600
+}
+```
+
+### Client Pre-flight Check
+
+Before establishing a WebSocket connection, clients should:
+1. Call `GET /api/status` to check server availability
+2. Check `capacity.available_slots > 0` before connecting
+3. Display appropriate UI if server is at capacity

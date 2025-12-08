@@ -998,7 +998,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
                     tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
                 }
             }
-            Err(code) => return Ok(code.into_response()),
+            Err(err) => return Ok(err.into_response()),
         }
         let (wav, transcript) = {
             let _guard = state.0 .0.mutex.lock().await;
@@ -1034,7 +1034,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
                     tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
                 }
             }
-            Err(code) => return Ok(code.into_response()),
+            Err(err) => return Ok(err.into_response()),
         }
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
@@ -1150,8 +1150,8 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling asr-streaming query");
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1192,8 +1192,8 @@ fn batched_asr_router(
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!(len = req.len(), "handling asr post query");
-        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
         Ok((
@@ -1212,8 +1212,8 @@ fn batched_asr_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling batched asr-streaming query");
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1270,8 +1270,8 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
         req: axum::Json<py_module::TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py streaming post query {req:?}");
-        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let wav_stream = state.0 .0.handle_query(&req).await?;
         let body = Body::from_stream(wav_stream);
@@ -1292,8 +1292,8 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
     ) -> utils::AxumResult<Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
@@ -1327,8 +1327,8 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py asr streaming post query {req:?}");
-        if let Err(code) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
 
@@ -1348,8 +1348,8 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
@@ -1398,8 +1398,8 @@ fn mimi_router(
         // It's tricky to set the headers of a websocket in javascript so we pass the token via the
         // query too.
         if state.0 .0.auth_recv() {
-            if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
-                return Ok(code.into_response());
+            if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
+                return Ok(err.into_response());
             }
         }
         let room_id = match headers.get(ROOM_ID_HEADER) {
@@ -1432,8 +1432,8 @@ fn mimi_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
-        if let Err(code) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
-            return Ok(code.into_response());
+        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
+            return Ok(err.into_response());
         }
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),

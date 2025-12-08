@@ -3,10 +3,14 @@
 // LICENSE file in the root directory of this source tree.
 
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::OnceLock;
+
+use crate::metrics;
 
 /// Header for legacy API key authentication
 pub const ID_HEADER: &str = "kyutai-api-key";
@@ -19,6 +23,107 @@ pub const SESSION_COOKIE: &str = "better-auth.session_token";
 
 /// Global JWT secret loaded from environment
 static JWT_SECRET: OnceLock<Option<String>> = OnceLock::new();
+
+// ============================================================================
+// AuthError - Structured authentication error type
+// ============================================================================
+
+/// Authentication error variants with structured JSON responses
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthErrorCode {
+    InvalidKey,
+    ExpiredToken,
+    MissingCredentials,
+    JwtValidationFailed,
+}
+
+impl std::fmt::Display for AuthErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidKey => write!(f, "invalid_key"),
+            Self::ExpiredToken => write!(f, "expired_token"),
+            Self::MissingCredentials => write!(f, "missing_credentials"),
+            Self::JwtValidationFailed => write!(f, "jwt_validation_failed"),
+        }
+    }
+}
+
+/// Structured authentication error with JSON response body
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthError {
+    pub error: &'static str,
+    pub code: AuthErrorCode,
+    pub message: String,
+    pub hint: &'static str,
+}
+
+impl AuthError {
+    /// Invalid or unrecognized API key
+    pub fn invalid_key(masked_key: Option<String>) -> Self {
+        let message = match masked_key {
+            Some(k) => format!("Invalid API key: {k}"),
+            None => "Invalid API key".to_string(),
+        };
+        Self {
+            error: "unauthorized",
+            code: AuthErrorCode::InvalidKey,
+            message,
+            hint: "Provide a valid key via kyutai-api-key header or auth_id query param",
+        }
+    }
+
+    /// JWT session has expired
+    pub fn expired_token() -> Self {
+        Self {
+            error: "unauthorized",
+            code: AuthErrorCode::ExpiredToken,
+            message: "Session has expired".to_string(),
+            hint: "Re-authenticate to obtain a new session token",
+        }
+    }
+
+    /// No authentication credentials provided
+    pub fn missing_credentials() -> Self {
+        Self {
+            error: "unauthorized",
+            code: AuthErrorCode::MissingCredentials,
+            message: "No authentication credentials provided".to_string(),
+            hint: "Provide kyutai-api-key header, Authorization Bearer token, or session cookie",
+        }
+    }
+
+    /// JWT validation failed (signature, format, etc.)
+    pub fn jwt_validation_failed(reason: &str) -> Self {
+        Self {
+            error: "unauthorized",
+            code: AuthErrorCode::JwtValidationFailed,
+            message: format!("JWT validation failed: {reason}"),
+            hint: "Ensure the token is properly signed and not corrupted",
+        }
+    }
+
+    /// Get the error code as a string for metrics labels
+    pub fn error_type(&self) -> &'static str {
+        match self.code {
+            AuthErrorCode::InvalidKey => "invalid_key",
+            AuthErrorCode::ExpiredToken => "expired_token",
+            AuthErrorCode::MissingCredentials => "missing_credentials",
+            AuthErrorCode::JwtValidationFailed => "jwt_validation_failed",
+        }
+    }
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        // Increment Prometheus counter with error type label
+        metrics::auth::ERROR_TOTAL
+            .with_label_values(&[self.error_type()])
+            .inc();
+
+        (StatusCode::UNAUTHORIZED, Json(self)).into_response()
+    }
+}
 
 /// Session data within the Better Auth JWT
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,15 +217,35 @@ impl AuthConfig {
 
         // Load JWT secret for Better Auth
         let jwt_secret = std::env::var("BETTER_AUTH_SECRET").ok();
-        if jwt_secret.is_some() {
-            tracing::info!("Better Auth JWT validation enabled");
-        }
 
         Self {
             authorized_ids,
             jwt_secret,
         }
     }
+
+    /// Log authentication configuration (call after tracing is initialized)
+    pub fn log_config(&self) {
+        let masked: Vec<String> = self.authorized_ids.iter().map(|k| mask_key(k)).collect();
+        if masked.is_empty() {
+            tracing::warn!("No API keys configured (MOSHI_API_KEY not set)");
+        } else {
+            tracing::info!(keys = ?masked, count = masked.len(), "Authorized API keys loaded");
+        }
+        if self.jwt_secret.is_some() {
+            tracing::info!("Better Auth JWT validation enabled (BETTER_AUTH_SECRET is set)");
+        }
+    }
+}
+
+/// Mask an API key for logging (keep first 6 and last 4 chars if long enough)
+pub fn mask_key(key: &str) -> String {
+    if key.len() <= 10 {
+        return "*hidden*".to_string();
+    }
+    let prefix = &key[..6];
+    let suffix = &key[key.len().saturating_sub(4)..];
+    format!("{prefix}…{suffix}")
 }
 
 /// Get the JWT secret from environment (cached)
@@ -154,10 +279,10 @@ fn extract_session_cookie(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// Validate a Better Auth JWT token
-fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
+fn validate_jwt(token: &str) -> Result<BetterAuthClaims, AuthError> {
     let secret = get_jwt_secret().ok_or_else(|| {
         tracing::warn!("JWT validation attempted but BETTER_AUTH_SECRET not configured");
-        StatusCode::UNAUTHORIZED
+        AuthError::jwt_validation_failed("BETTER_AUTH_SECRET not configured")
     })?;
 
     let key = DecodingKey::from_secret(secret.as_bytes());
@@ -191,7 +316,7 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
                     now = now,
                     "Session expired"
                 );
-                return Err(StatusCode::UNAUTHORIZED);
+                return Err(AuthError::expired_token());
             }
 
             tracing::debug!(
@@ -204,7 +329,7 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
         }
         Err(e) => {
             tracing::debug!(error = %e, "JWT validation failed");
-            Err(StatusCode::UNAUTHORIZED)
+            Err(AuthError::jwt_validation_failed(&e.to_string()))
         }
     }
 }
@@ -214,12 +339,12 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, StatusCode> {
 /// 2. Bearer token (Authorization header with JWT)
 /// 3. Session cookie (better-auth.session_token)
 ///
-/// Returns Ok(()) if any method succeeds, Err(StatusCode::UNAUTHORIZED) otherwise.
+/// Returns Ok(()) if any method succeeds, Err(AuthError) with structured JSON otherwise.
 pub fn check(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
     authorized_ids: &HashSet<String>,
-) -> Result<(), StatusCode> {
+) -> Result<(), AuthError> {
     // Method 1: Legacy API key authentication
     let api_key = headers
         .get(ID_HEADER)
@@ -230,25 +355,39 @@ pub fn check(
         if authorized_ids.contains(key) {
             tracing::debug!("Authenticated via API key");
             return Ok(());
+        } else {
+            // Invalid key provided - log at WARN with masked key
+            let masked = mask_key(key);
+            tracing::warn!(masked_key = %masked, "Authentication failed: invalid API key");
+            return Err(AuthError::invalid_key(Some(masked)));
         }
     }
 
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
-        if validate_jwt(token).is_ok() {
-            return Ok(());
+        match validate_jwt(token) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                return Err(e);
+            }
         }
     }
 
     // Method 3: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
-        if validate_jwt(token).is_ok() {
-            return Ok(());
+        match validate_jwt(token) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                return Err(e);
+            }
         }
     }
 
-    // No valid authentication found
-    Err(StatusCode::UNAUTHORIZED)
+    // No credentials provided at all
+    tracing::warn!("Authentication failed: no credentials provided");
+    Err(AuthError::missing_credentials())
 }
 
 /// Extended check that returns user information if authenticated via JWT
@@ -256,7 +395,7 @@ pub fn check_with_user(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
     authorized_ids: &HashSet<String>,
-) -> Result<Option<BetterAuthClaims>, StatusCode> {
+) -> Result<Option<BetterAuthClaims>, AuthError> {
     // Method 1: Legacy API key authentication
     let api_key = headers
         .get(ID_HEADER)
@@ -267,25 +406,39 @@ pub fn check_with_user(
         if authorized_ids.contains(key) {
             tracing::debug!("Authenticated via API key");
             return Ok(None); // No user info for API key auth
+        } else {
+            // Invalid key provided - log at WARN with masked key
+            let masked = mask_key(key);
+            tracing::warn!(masked_key = %masked, "Authentication failed: invalid API key");
+            return Err(AuthError::invalid_key(Some(masked)));
         }
     }
 
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
-        if let Ok(claims) = validate_jwt(token) {
-            return Ok(Some(claims));
+        match validate_jwt(token) {
+            Ok(claims) => return Ok(Some(claims)),
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                return Err(e);
+            }
         }
     }
 
     // Method 3: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
-        if let Ok(claims) = validate_jwt(token) {
-            return Ok(Some(claims));
+        match validate_jwt(token) {
+            Ok(claims) => return Ok(Some(claims)),
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                return Err(e);
+            }
         }
     }
 
-    // No valid authentication found
-    Err(StatusCode::UNAUTHORIZED)
+    // No credentials provided at all
+    tracing::warn!("Authentication failed: no credentials provided");
+    Err(AuthError::missing_credentials())
 }
 
 #[cfg(test)]
@@ -338,5 +491,32 @@ mod tests {
 
         assert!(check(&headers, Some("query-key"), &authorized).is_ok());
         assert!(check(&headers, Some("wrong-key"), &authorized).is_err());
+    }
+
+    #[test]
+    fn test_invalid_key_error() {
+        let mut headers = HeaderMap::new();
+        headers.insert(ID_HEADER, "wrong-key".parse().unwrap());
+
+        let mut authorized = HashSet::new();
+        authorized.insert("correct-key".to_string());
+
+        let err = check(&headers, None, &authorized).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::InvalidKey));
+    }
+
+    #[test]
+    fn test_missing_credentials_error() {
+        let headers = HeaderMap::new();
+        let authorized = HashSet::new();
+
+        let err = check(&headers, None, &authorized).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::MissingCredentials));
+    }
+
+    #[test]
+    fn test_mask_key() {
+        assert_eq!(mask_key("short"), "*hidden*");
+        assert_eq!(mask_key("abcdefghijklmnop"), "abcdef…mnop");
     }
 }

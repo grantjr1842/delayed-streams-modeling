@@ -1,0 +1,160 @@
+{
+  "phase": "implementing",
+  "epic_issue": 39,
+  "repository": {
+    "owner": "grantjr1842",
+    "name": "delayed-streams-modeling",
+    "full_name": "grantjr1842/delayed-streams-modeling",
+    "default_branch": "main"
+  },
+  "issues": [
+    {
+      "number": 38,
+      "title": "Auto-load .env file on moshi-server startup",
+      "branch": "feat/issue-38-auto-load-env",
+      "tasks": [
+        {"description": "Add dotenvy dependency to workspace Cargo.toml", "done": false},
+        {"description": "Add dotenvy dependency to moshi-server/Cargo.toml", "done": false},
+        {"description": "Call dotenvy::dotenv().ok() early in main_() before config loading", "done": false},
+        {"description": "Update documentation in docs/MOSHI_SERVER_SETUP.md", "done": false},
+        {"description": "Update .env.example to remove export prefixes", "done": false},
+        {"description": "Update .env to remove export prefixes", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 38,
+        "title": "Auto-load .env file on moshi-server startup",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/38"
+      },
+      "pr_number": null,
+      "started_at": null
+    },
+    {
+      "number": 40,
+      "title": "Server-Side Auth Error Messages",
+      "branch": "feat/issue-40-auth-error-messages",
+      "tasks": [
+        {"description": "Create AuthError enum with variants: InvalidKey, ExpiredToken, MissingCredentials, JwtValidationFailed", "done": false},
+        {"description": "Implement IntoResponse for AuthError returning JSON body", "done": false},
+        {"description": "Update auth::check() to return Result<(), AuthError> instead of Result<(), StatusCode>", "done": false},
+        {"description": "Update all routers to use new error type", "done": false},
+        {"description": "Add auth_error_total Prometheus counter with error_type label", "done": false},
+        {"description": "Log auth failures at WARN level with masked credentials", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 40,
+        "title": "Server-Side Auth Error Messages",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/40"
+      },
+      "pr_number": null,
+      "started_at": null
+    },
+    {
+      "number": 41,
+      "title": "WebSocket Close Codes & Reasons",
+      "branch": "feat/issue-41-ws-close-codes",
+      "tasks": [
+        {"description": "Create CloseCode enum in protocol.rs with custom codes (4000-4006)", "done": false},
+        {"description": "Create helper close_with_reason(sender, code, reason) in utils.rs", "done": false},
+        {"description": "Update batched_asr.rs to use close codes for capacity errors", "done": false},
+        {"description": "Update py_basr_module.rs to use close codes", "done": false},
+        {"description": "Update asr.rs to use close codes for timeout", "done": false},
+        {"description": "Add close code to timeout handling in recv/send loops", "done": false},
+        {"description": "Document close codes in docs/MOSHI_SERVER_SETUP.md", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 41,
+        "title": "WebSocket Close Codes & Reasons",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/41"
+      },
+      "pr_number": null,
+      "started_at": null
+    },
+    {
+      "number": 42,
+      "title": "Server Health & Capacity Endpoint",
+      "branch": "feat/issue-42-status-endpoint",
+      "tasks": [
+        {"description": "Create StatusResponse struct with serde serialization", "done": false},
+        {"description": "Track server start time for uptime calculation", "done": false},
+        {"description": "Expose channel availability from BatchedAsr (add available_channels() method)", "done": false},
+        {"description": "Add /api/status route in main.rs", "done": false},
+        {"description": "Include build info from vergen", "done": false},
+        {"description": "Include auth configuration (without secrets)", "done": false},
+        {"description": "Update existing /health endpoints to return JSON", "done": false},
+        {"description": "Document endpoint in API docs", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 42,
+        "title": "Server Health & Capacity Endpoint",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/42"
+      },
+      "pr_number": null,
+      "started_at": null
+    },
+    {
+      "number": 43,
+      "title": "Client Error Handling & UI",
+      "branch": "feat/issue-43-client-error-ui",
+      "tasks": [
+        {"description": "Create types/errors.ts with error type definitions", "done": false},
+        {"description": "Create lib/errors/parse-ws-error.ts to map close codes to error types", "done": false},
+        {"description": "Update useSocket.ts to handle error and close events properly", "done": false},
+        {"description": "Add error state to SocketContext", "done": false},
+        {"description": "Create components/connection/error-banner.tsx UI component", "done": false},
+        {"description": "Implement retry logic with exponential backoff for retryable errors", "done": false},
+        {"description": "Add pre-flight /api/status check before WebSocket connection", "done": false},
+        {"description": "Show toast notifications for transient errors", "done": false},
+        {"description": "Add Retry button for retryable errors", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 43,
+        "title": "Client Error Handling & UI",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/43"
+      },
+      "pr_number": null,
+      "started_at": null
+    },
+    {
+      "number": 44,
+      "title": "Error Logging & Observability",
+      "branch": "feat/issue-44-error-observability",
+      "tasks": [
+        {"description": "Create metrics/errors.rs module with error counters", "done": false},
+        {"description": "Add auth_error_total counter in auth.rs", "done": false},
+        {"description": "Add ws_close_total counter in WebSocket handlers", "done": false},
+        {"description": "Add connection_error_total counter for internal errors", "done": false},
+        {"description": "Ensure all errors use structured logging with consistent fields", "done": false},
+        {"description": "Create lib/logging/error-logger.ts with structured logging (client)", "done": false},
+        {"description": "Log all connection errors with full context (client)", "done": false},
+        {"description": "Add optional telemetry hook for production error tracking", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "pending",
+      "github_issue": {
+        "number": 44,
+        "title": "Error Logging & Observability",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/44"
+      },
+      "pr_number": null,
+      "started_at": null
+    }
+  ],
+  "current_issue_index": 1,
+  "last_updated": "2025-12-09T22:50:00Z"
+}

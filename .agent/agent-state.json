@@ -36,23 +36,30 @@
       "title": "Server-Side Auth Error Messages",
       "branch": "feat/issue-40-auth-error-messages",
       "tasks": [
-        {"description": "Create AuthError enum with variants: InvalidKey, ExpiredToken, MissingCredentials, JwtValidationFailed", "done": false},
-        {"description": "Implement IntoResponse for AuthError returning JSON body", "done": false},
-        {"description": "Update auth::check() to return Result<(), AuthError> instead of Result<(), StatusCode>", "done": false},
-        {"description": "Update all routers to use new error type", "done": false},
-        {"description": "Add auth_error_total Prometheus counter with error_type label", "done": false},
-        {"description": "Log auth failures at WARN level with masked credentials", "done": false}
+        {"description": "Create AuthError enum with variants: InvalidKey, ExpiredToken, MissingCredentials, JwtValidationFailed", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"},
+        {"description": "Implement IntoResponse for AuthError returning JSON body", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"},
+        {"description": "Update auth::check() to return Result<(), AuthError> instead of Result<(), StatusCode>", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"},
+        {"description": "Update all routers to use new error type", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"},
+        {"description": "Add auth_error_total Prometheus counter with error_type label", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"},
+        {"description": "Log auth failures at WARN level with masked credentials", "done": true, "commit_sha": "f78f6badb36762a2012e3baf9fd3efece70c92e7", "completed_at": "2025-12-09T22:55:00Z"}
       ],
-      "current_task_index": 0,
-      "status": "pending",
+      "current_task_index": 6,
+      "status": "complete",
       "github_issue": {
         "number": 40,
         "title": "Server-Side Auth Error Messages",
         "state": "OPEN",
         "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/40"
       },
-      "pr_number": null,
-      "started_at": null
+      "pr_number": 45,
+      "github_pr": {
+        "number": 45,
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/pull/45",
+        "state": "OPEN",
+        "reviewDecision": ""
+      },
+      "started_at": "2025-12-09T22:55:00Z",
+      "completed_at": "2025-12-09T22:58:00Z"
     },
     {
       "number": 41,
@@ -155,6 +162,6 @@
       "started_at": null
     }
   ],
-  "current_issue_index": 1,
-  "last_updated": "2025-12-09T22:50:00Z"
+  "current_issue_index": 2,
+  "last_updated": "2025-12-09T22:58:00Z"
 }

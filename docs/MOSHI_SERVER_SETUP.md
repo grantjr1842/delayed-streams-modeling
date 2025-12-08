@@ -236,3 +236,40 @@ Before establishing a WebSocket connection, clients should:
 1. Call `GET /api/status` to check server availability
 2. Check `capacity.available_slots > 0` before connecting
 3. Display appropriate UI if server is at capacity
+## 11. Error Metrics & Observability
+
+The server exposes Prometheus metrics for error tracking and observability at `/metrics`.
+
+### Error Counters
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `ws_close_total` | code, reason | WebSocket close events by close code |
+| `connection_error_total` | error_type, module | Connection errors by type and module |
+| `auth_error_total` | error_type | Authentication errors by type |
+
+### Error Types
+
+**Connection Errors** (`connection_error_total`):
+- `capacity` - Server at capacity (no free channels)
+- `timeout` - Connection timeout
+- `protocol` - Protocol error
+- `internal` - Internal server error
+
+**Auth Errors** (`auth_error_total`):
+- `authentication_failed` - No valid authentication method found
+- `invalid_key` - Invalid API key
+- `expired_token` - Expired JWT token
+- `jwt_validation_failed` - JWT validation failed
+
+### Structured Logging
+
+All errors use structured logging with consistent fields:
+- `error_type` - Category of error
+- `module` - Module where error occurred (for connection errors)
+- Additional context-specific fields
+
+Example log output:
+```
+2025-12-08T23:00:00Z ERROR moshi_server::batched_asr error_type="capacity" module="batched_asr" no free channels - server at capacity
+```

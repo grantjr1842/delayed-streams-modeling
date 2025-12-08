@@ -5,6 +5,7 @@
 use crate::asr::{InMsg, OutMsg};
 use crate::metrics::asr as metrics;
 use crate::protocol::CloseCode;
+use crate::metrics::errors as error_metrics;
 use crate::py_module::{init, toml_to_py, VerbosePyErr};
 use crate::PyAsrStreamingQuery as Query;
 use anyhow::{Context, Result};
@@ -545,7 +546,12 @@ impl M {
         let (bidx, in_tx, mut out_rx) = match self.channels()? {
             Some(x) => x,
             None => {
-                tracing::error!("no free channels - server at capacity");
+                tracing::error!(
+                    error_type = "capacity",
+                    module = "py_batched_asr",
+                    "no free channels - server at capacity"
+                );
+                error_metrics::record_connection_error("capacity", "py_batched_asr");
                 // Send error message in protocol format
                 let mut msg = vec![];
                 OutMsg::Error { message: "Server at capacity - no free channels available".into() }.serialize(

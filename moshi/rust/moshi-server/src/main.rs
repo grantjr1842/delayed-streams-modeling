@@ -819,7 +819,12 @@ async fn main_() -> Result<()> {
             let static_dir = utils::resolve_or_download(&config.static_dir)?;
             let shared_state = Arc::new(SharedStateInner { config: config.clone() });
             let state = Arc::new(AppStateInner::new(&args, config)?);
+            // Initialize server start time for uptime tracking
+            init_server_start_time();
+
             let mut app = axum::Router::new()
+                .route("/api/status", get(server_status))
+                .route("/api/health", get(health_check))
                 .route("/api/build_info", get(build_info))
                 .route("/api/modules_info", get(modules_info))
                 .route("/metrics", axum::routing::get(metrics))
@@ -1059,6 +1064,185 @@ async fn build_info(
 ) -> impl IntoResponse {
     let build_info = utils::BuildInfo::new();
     utils::WrapJson(Ok(build_info)).into_response()
+}
+
+// ============================================================================
+// Server Status Endpoint
+// ============================================================================
+
+/// Response structure for /api/status endpoint
+#[derive(serde::Serialize, Debug)]
+struct StatusResponse {
+    /// Server status: "healthy", "degraded", or "unhealthy"
+    status: &'static str,
+    /// Server uptime in seconds
+    uptime_seconds: u64,
+    /// ISO 8601 timestamp when server started
+    started_at: String,
+    /// Build information
+    build: utils::BuildInfo,
+    /// Module capacity information
+    capacity: CapacityInfo,
+    /// Authentication configuration (without secrets)
+    auth: AuthInfo,
+}
+
+/// Capacity information for all modules
+#[derive(serde::Serialize, Debug)]
+struct CapacityInfo {
+    /// Total slots across all batched modules
+    total_slots: usize,
+    /// Used slots across all batched modules
+    used_slots: usize,
+    /// Available slots (total - used)
+    available_slots: usize,
+    /// Per-module breakdown
+    modules: Vec<ModuleCapacity>,
+}
+
+/// Capacity information for a single module
+#[derive(serde::Serialize, Debug)]
+struct ModuleCapacity {
+    /// Module name/path
+    name: String,
+    /// Module type (batched_asr, py_batched_asr, py)
+    module_type: &'static str,
+    /// Total slots for this module
+    total_slots: usize,
+    /// Used slots for this module
+    used_slots: usize,
+    /// Available slots for this module
+    available_slots: usize,
+}
+
+/// Authentication configuration (without secrets)
+#[derive(serde::Serialize, Debug)]
+struct AuthInfo {
+    /// Whether API key auth is configured
+    api_key_configured: bool,
+    /// Whether Better Auth JWT validation is enabled
+    better_auth_enabled: bool,
+}
+
+/// Global server start time (set once at startup)
+static SERVER_START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static SERVER_START_TIMESTAMP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Initialize server start time (call once at startup)
+fn init_server_start_time() {
+    SERVER_START_TIME.get_or_init(std::time::Instant::now);
+    SERVER_START_TIMESTAMP.get_or_init(|| {
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    });
+}
+
+/// Get server uptime in seconds
+fn get_uptime_seconds() -> u64 {
+    SERVER_START_TIME
+        .get()
+        .map(|start| start.elapsed().as_secs())
+        .unwrap_or(0)
+}
+
+async fn server_status(
+    axum::extract::ConnectInfo(_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    state: axum::extract::State<AppState>,
+    _req: axum::extract::Query<()>,
+) -> impl IntoResponse {
+    // Collect capacity info from all modules
+    let mut total_slots = 0usize;
+    let mut used_slots = 0usize;
+    let mut modules = Vec::new();
+
+    for module in state.modules.iter() {
+        match module {
+            Module::BatchedAsr { path, m } => {
+                let t = m.total_slots();
+                let u = m.used_slots();
+                total_slots += t;
+                used_slots += u;
+                modules.push(ModuleCapacity {
+                    name: path.clone(),
+                    module_type: "batched_asr",
+                    total_slots: t,
+                    used_slots: u,
+                    available_slots: t.saturating_sub(u),
+                });
+            }
+            Module::PyBatchedAsr { path, m } => {
+                let t = m.total_slots();
+                let u = m.used_slots();
+                total_slots += t;
+                used_slots += u;
+                modules.push(ModuleCapacity {
+                    name: path.clone(),
+                    module_type: "py_batched_asr",
+                    total_slots: t,
+                    used_slots: u,
+                    available_slots: t.saturating_sub(u),
+                });
+            }
+            Module::Py { path, m } => {
+                let t = m.total_slots();
+                let u = m.used_slots();
+                total_slots += t;
+                used_slots += u;
+                modules.push(ModuleCapacity {
+                    name: path.clone(),
+                    module_type: "py",
+                    total_slots: t,
+                    used_slots: u,
+                    available_slots: t.saturating_sub(u),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let available_slots = total_slots.saturating_sub(used_slots);
+
+    // Determine overall status
+    let status = if available_slots == 0 && total_slots > 0 {
+        "degraded" // At capacity
+    } else {
+        "healthy"
+    };
+
+    let response = StatusResponse {
+        status,
+        uptime_seconds: get_uptime_seconds(),
+        started_at: SERVER_START_TIMESTAMP
+            .get()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string()),
+        build: utils::BuildInfo::new(),
+        capacity: CapacityInfo {
+            total_slots,
+            used_slots,
+            available_slots,
+            modules,
+        },
+        auth: AuthInfo {
+            api_key_configured: std::env::var("MOSHI_API_KEY").is_ok(),
+            better_auth_enabled: std::env::var("BETTER_AUTH_SECRET").is_ok(),
+        },
+    };
+
+    utils::WrapJson(Ok(response)).into_response()
+}
+
+/// Simple health check endpoint returning JSON
+async fn health_check() -> impl IntoResponse {
+    #[derive(serde::Serialize)]
+    struct HealthResponse {
+        status: &'static str,
+        uptime_seconds: u64,
+    }
+
+    axum::Json(HealthResponse {
+        status: "ok",
+        uptime_seconds: get_uptime_seconds(),
+    })
 }
 
 async fn modules_info(

@@ -5,6 +5,7 @@
 use crate::asr::{InMsg, OutMsg};
 use crate::metrics::asr as metrics;
 use crate::metrics::warmup as warmup_metrics;
+use crate::protocol::CloseCode;
 use crate::AsrStreamingQuery as Query;
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -598,15 +599,21 @@ impl BatchedAsr {
         let (batch_idx, in_tx, mut out_rx) = match self.channels()? {
             Some(v) => v,
             None => {
-                tracing::error!("no free channels");
+                tracing::error!("no free channels - server at capacity");
+                // Send error message in protocol format
                 let mut msg = vec![];
-                OutMsg::Error { message: "no free channels".into() }.serialize(
+                OutMsg::Error { message: "Server at capacity - no free channels available".into() }.serialize(
                     &mut rmp_serde::Serializer::new(&mut msg)
                         .with_human_readable()
                         .with_struct_map(),
                 )?;
                 sender.send(ws::Message::binary(msg)).await?;
-                sender.close().await?;
+                // Close with proper close code
+                crate::utils::close_with_reason(
+                    &mut sender,
+                    CloseCode::ServerAtCapacity,
+                    Some("No free channels available, please retry later"),
+                ).await?;
                 anyhow::bail!("no free channels")
             }
         };

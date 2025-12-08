@@ -191,6 +191,63 @@ where
     })
 }
 
+// ============================================================================
+// WebSocket Close Helpers
+// ============================================================================
+
+use axum::extract::ws;
+use crate::protocol::CloseCode;
+use futures_util::SinkExt;
+
+/// Closes a WebSocket connection with a specific close code and reason.
+/// This is a helper to ensure consistent close frame handling across all handlers.
+///
+/// # Arguments
+/// * `sender` - The WebSocket sender (split from the socket)
+/// * `code` - The close code to send
+/// * `reason` - Optional custom reason message (uses default if None)
+///
+/// # Returns
+/// Result indicating if the close frame was sent successfully
+pub async fn close_with_reason<S>(
+    sender: &mut S,
+    code: CloseCode,
+    reason: Option<&str>,
+) -> Result<()>
+where
+    S: SinkExt<ws::Message> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
+    let frame = match reason {
+        Some(r) => code.with_reason(r),
+        None => code.to_close_frame(),
+    };
+    
+    tracing::info!(
+        code = code.code(),
+        reason = %frame.reason,
+        retryable = code.is_retryable(),
+        "closing WebSocket connection"
+    );
+    
+    sender
+        .send(ws::Message::Close(Some(frame)))
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to send close frame: {}", e))?;
+    
+    Ok(())
+}
+
+/// Closes a WebSocket connection with a close code using the default reason.
+#[allow(dead_code)]
+pub async fn close_connection<S>(sender: &mut S, code: CloseCode) -> Result<()>
+where
+    S: SinkExt<ws::Message> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
+    close_with_reason(sender, code, None).await
+}
+
 pub fn spawn_blocking<F>(name: &'static str, f: F) -> tokio::task::JoinHandle<()>
 where
     F: FnOnce() -> Result<()> + Send + 'static,

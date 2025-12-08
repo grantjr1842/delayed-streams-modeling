@@ -33,6 +33,7 @@ candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
 clap = { version = "4.5.53", features = ["derive"] }
 color-eyre = "0.6.5"
+dotenvy = "0.15"
 cpal = "0.16.0"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 env_logger = "0.11.8"

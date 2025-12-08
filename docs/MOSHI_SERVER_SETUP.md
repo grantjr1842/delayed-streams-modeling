@@ -51,14 +51,28 @@ To prevent `CUDA_ERROR_OUT_OF_MEMORY` on the 8GB card, we implemented automatic 
 - `MOSHI_PER_BATCH_ITEM_MB`: Override VRAM per batch item estimate (default 400).
 - `MOSHI_API_KEY`: Comma-separated list of authorized API keys (replaces hardcoded `authorized_ids` in config).
 
-## 3. Authentication
+## 3. Environment Configuration
 
-The server now supports loading authorized keys from the `MOSHI_API_KEY` environment variable. This is preferred over hardcoding tokens in the configuration file.
+The server automatically loads environment variables from a `.env` file in the current working directory at startup using `dotenvy`. This eliminates the need to manually source the file before running.
 
+### Usage
+Simply create a `.env` file (see `.env.example` for template):
 ```bash
-export MOSHI_API_KEY="my_secret_token,another_token"
-moshi-server worker --config ...
+# .env
+MOSHI_API_KEY=my_secret_token,another_token
+BETTER_AUTH_SECRET=your_jwt_secret_here
 ```
+
+Then run the server directly:
+```bash
+moshi-server worker --config configs/config-stt-en-hf.toml
+```
+
+The `.env` file is loaded before any configuration parsing, so all environment variables are available for config resolution.
+
+### Authentication
+
+The server supports loading authorized keys from the `MOSHI_API_KEY` environment variable. This is preferred over hardcoding tokens in the configuration file.
 
 ## 4. Turing (RTX 20xx) Compatibility
 

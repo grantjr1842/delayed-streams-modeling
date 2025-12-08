@@ -1,11 +1,11 @@
 import {
-  type FC,
-  type MutableRefObject,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
+    type FC,
+    type MutableRefObject,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
 } from "react";
 import fixWebmDuration from "webm-duration-fix";
 import { Button } from "../../components/Button/Button";
@@ -281,7 +281,18 @@ export const Conversation: FC<ConversationProps> = ({
     stopRecording();
   }, [stopRecording]);
 
-  const { isConnected, sendMessage, socket, start, stop } = useSocket({
+  const {
+    isConnected,
+    isConnecting,
+    sendMessage,
+    socket,
+    start,
+    stop,
+    error,
+    clearError,
+    retryConnection,
+    retryCount,
+  } = useSocket({
     // onMessage,
     uri: WSURL,
     onDisconnect,
@@ -298,8 +309,13 @@ export const Conversation: FC<ConversationProps> = ({
     <SocketContext.Provider
       value={{
         isConnected,
+        isConnecting,
         sendMessage,
         socket,
+        error,
+        clearError,
+        retryConnection,
+        retryCount,
       }}
     >
       <MediaContext.Provider

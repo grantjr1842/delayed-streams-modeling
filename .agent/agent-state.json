@@ -12,16 +12,18 @@
         {"description": "Implement ServerBanner module with consistent styling utilities", "done": true, "commit_sha": "458c8c21a97730eccf4acbed4fc1d49a1387f66f", "completed_at": "2025-12-09T17:15:00Z"},
         {"description": "Implement custom FormatEvent trait for beautiful console output", "done": true, "commit_sha": "6ff93724b3a4fb579a072760dbfc5a1d78337b87", "completed_at": "2025-12-09T17:25:00Z"},
         {"description": "Add level-based icons (✓ INFO, ⚠ WARN, ✕ ERROR)", "done": true, "commit_sha": "6ff93724b3a4fb579a072760dbfc5a1d78337b87", "completed_at": "2025-12-09T17:25:00Z"},
-        {"description": "Add progress bar for model loading/warmup phases", "done": false},
-        {"description": "Create table formatter for multi-row data", "done": false},
+        {"description": "Add progress bar for model loading/warmup phases", "done": true, "commit_sha": "25a49aab4f81a49c39a5db522c00fcfbaca06879", "completed_at": "2025-12-09T17:35:00Z"},
+        {"description": "Create table formatter for multi-row data", "done": true, "commit_sha": "25a49aab4f81a49c39a5db522c00fcfbaca06879", "completed_at": "2025-12-09T17:35:00Z"},
         {"description": "Add --log-style CLI option (compact, pretty, verbose)", "done": true, "commit_sha": "6ff93724b3a4fb579a072760dbfc5a1d78337b87", "completed_at": "2025-12-09T17:25:00Z"},
         {"description": "Ensure file logs remain clean (no ANSI codes)", "done": true, "commit_sha": "6ff93724b3a4fb579a072760dbfc5a1d78337b87", "completed_at": "2025-12-09T17:25:00Z"},
-        {"description": "Update documentation in docs/MOSHI_SERVER_SETUP.md", "done": false}
+        {"description": "Update documentation in docs/MOSHI_SERVER_SETUP.md", "done": true, "commit_sha": "1d27bf860dbfbe25ec3e4a287318bba2d00bab49", "completed_at": "2025-12-09T17:40:00Z"}
       ],
-      "current_task_index": 3,
-      "status": "in_progress",
-      "pr_number": null,
-      "started_at": "2025-12-09T17:10:00Z"
+      "current_task_index": 10,
+      "status": "complete",
+      "pr_number": 72,
+      "github_pr": {"number": 72, "url": "https://github.com/grantjr1842/delayed-streams-modeling/pull/72", "state": "OPEN", "reviewDecision": ""},
+      "started_at": "2025-12-09T17:10:00Z",
+      "completed_at": "2025-12-09T17:40:00Z"
     },
     {
       "number": 71,
@@ -45,7 +47,7 @@
       "started_at": null
     }
   ],
-  "current_issue_index": 0,
+  "current_issue_index": 1,
   "repository": {
     "owner": "grantjr1842",
     "name": "delayed-streams-modeling",

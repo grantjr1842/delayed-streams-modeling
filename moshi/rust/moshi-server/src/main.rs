@@ -360,13 +360,17 @@ fn lm_router(s: Arc<lm::Lm>, path: &str) -> axum::Router<()> {
         }
     }
 
+    #[tracing::instrument(skip(ws, headers, state), fields(client_ip))]
     async fn lm_streaming(
         ws: axum::extract::ws::WebSocketUpgrade,
         headers: axum::http::HeaderMap,
         state: axum::extract::State<Arc<lm::Lm>>,
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        tracing::info!(addr, "handling lm-streaming query");
+        if let Some(ip) = &addr {
+             tracing::Span::current().record("client_ip", ip);
+        }
+        tracing::info!("handling lm-streaming query");
         let state = state.0.clone();
         let upg = ws.write_buffer_size(0).on_upgrade(move |v| lm_websocket(v, state, addr));
         Ok(upg)
@@ -555,6 +559,7 @@ fn tracing_init(
     use tracing_rolling_file::{RollingConditionBase, RollingFileAppenderBase};
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::fmt::time::ChronoLocal;
+    use std::io::IsTerminal;
 
     let build_info = utils::BuildInfo::new();
     
@@ -631,6 +636,7 @@ fn tracing_init(
             
             json_layer.boxed()
         } else {
+            let use_ansi = std::io::stdout().is_terminal();
             let text_layer = tracing_subscriber::fmt::layer()
                 .event_format(
                     tracing_subscriber::fmt::format()
@@ -638,7 +644,7 @@ fn tracing_init(
                         .with_file(true)
                         .with_line_number(true)
                         .with_target(true)
-                        .with_ansi(true)  // ANSI colors for terminal
+                        .with_ansi(use_ansi)
                 )
                 .with_writer(std::io::stdout)
                 .with_filter(filter);
@@ -746,6 +752,10 @@ async fn main_() -> Result<()> {
                 json: args.json,
             };
             let _guard = tracing_init(log_config)?;
+            
+            // Create a span for the startup sequence
+            let startup_span = tracing::info_span!("startup");
+            let _enter = startup_span.enter();
 
             // Log Better Auth status (after tracing is initialized)
             if std::env::var("BETTER_AUTH_SECRET").is_ok() {
@@ -866,6 +876,9 @@ async fn main_() -> Result<()> {
             let state = Arc::new(AppStateInner::new(&args, config)?);
             // Initialize server start time for uptime tracking
             init_server_start_time();
+            
+            // End startup span before starting the server
+            drop(_enter);
 
             let mut app = axum::Router::new()
                 .route("/api/status", get(server_status))
@@ -1076,6 +1089,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         }
     }
 
+    #[tracing::instrument(skip(ws, headers, state), fields(client_ip))]
     async fn streaming_t(
         ws: axum::extract::ws::WebSocketUpgrade,
         headers: axum::http::HeaderMap,
@@ -1084,6 +1098,9 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
+        if let Some(ip) = &addr {
+             tracing::Span::current().record("client_ip", ip);
+        }
         let auth_result = auth::check_with_user(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
         
         let tts_query = req.0.clone();
@@ -1385,6 +1402,7 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
         StatusCode::OK
     }
 
+    #[tracing::instrument(skip(ws, headers, state), fields(client_ip))]
     async fn t(
         ws: axum::extract::ws::WebSocketUpgrade,
         headers: axum::http::HeaderMap,
@@ -1392,7 +1410,10 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
         req: axum::extract::Query<AsrStreamingQuery>,
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        tracing::info!(addr, "handling asr-streaming query");
+        if let Some(ip) = &addr {
+             tracing::Span::current().record("client_ip", ip);
+        }
+        tracing::info!("handling asr-streaming query");
         let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
         
         let asr_query = req.0.clone();
@@ -1457,6 +1478,7 @@ fn batched_asr_router(
             .into_response())
     }
 
+    #[tracing::instrument(skip(ws, headers, state), fields(client_ip))]
     async fn streaming_t(
         ws: axum::extract::ws::WebSocketUpgrade,
         headers: axum::http::HeaderMap,
@@ -1464,7 +1486,10 @@ fn batched_asr_router(
         req: axum::extract::Query<AsrStreamingQuery>,
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        tracing::info!(addr, "handling batched asr-streaming query");
+        if let Some(ip) = &addr {
+             tracing::Span::current().record("client_ip", ip);
+        }
+        tracing::info!("handling batched asr-streaming query");
         let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
         
         let asr_query = req.0.clone();

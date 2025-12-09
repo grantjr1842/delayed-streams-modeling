@@ -47,3 +47,10 @@ The OOM occurs during model loading or initialization.
 2. Allow `VRAM_RESERVED_MB` configuration via environment variable.
 3. Add pre-flight check to fail early if VRAM is critically low.
 4. Document the `MOSHI_VRAM_RESERVED_MB` variable.
+
+## Investigation: num_workers Impact
+Investigated `num_workers=12` concurrency.
+- **Finding:** `num_workers` refers to Tokio runtime threads handling network I/O.
+- **VRAM Impact:** Negligible. `BatchedAsr` uses a fixed `batch_size` and a single inference loop.
+- **Connection Handling:** Excess connections beyond `batch_size` are rejected with "Server at capacity".
+- **Conclusion:** Reducing `num_workers` will not help with VRAM OOM. Focus remains on `batch_size` and `VRAM_RESERVED_MB`.

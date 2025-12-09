@@ -4,8 +4,8 @@
 
 use crate::asr::{InMsg, OutMsg};
 use crate::metrics::asr as metrics;
-use crate::protocol::CloseCode;
 use crate::metrics::errors as error_metrics;
+use crate::protocol::CloseCode;
 use crate::py_module::{init, toml_to_py, VerbosePyErr};
 use crate::PyAsrStreamingQuery as Query;
 use anyhow::{Context, Result};
@@ -138,8 +138,9 @@ impl Inner {
         use rayon::prelude::*;
         let mut updates = vec![NODATA; batch_size];
         let mut channel_ids = vec![None; batch_size];
-        
-        let todo: Vec<Marker> = self.channels
+
+        let todo: Vec<Marker> = self
+            .channels
             .par_iter()
             .zip(batch_pcm.par_chunks_mut(FRAME_SIZE))
             .zip(updates.par_iter_mut())
@@ -150,7 +151,7 @@ impl Inner {
                 let channel = &mut *guard;
                 let c = channel.as_mut()?;
                 *channel_id_out = Some(c.id);
-                
+
                 if c.out_tx.is_closed() {
                     *channel = None;
                     None
@@ -210,6 +211,7 @@ impl Inner {
                             *channel = None;
                             None
                         }
+                        Ok(InMsg::Ping) => None,
                     }
                 }
             })
@@ -275,63 +277,67 @@ impl Inner {
                         std::thread::sleep(std::time::Duration::from_millis(2));
                         return Ok(());
                     }
-                    let todo = self.channels
+                    let todo = self
+                        .channels
                         .par_iter()
                         .zip(current_word.par_iter_mut())
                         .zip(words_start_step.par_iter_mut())
                         .enumerate()
-                        .flat_map(|(batch_idx, ((channel_mutex, word), start_step))| -> Option<MsgsOut> {
-                            let mut guard = channel_mutex.lock().unwrap();
-                            let channel = &mut *guard;
-                            if let Some(c) = channel.as_mut() {
-                                let mask = mask[batch_idx];
-                                let tokens_data = tokens_data[batch_idx];
+                        .flat_map(
+                            |(batch_idx, ((channel_mutex, word), start_step))| -> Option<MsgsOut> {
+                                let mut guard = channel_mutex.lock().unwrap();
+                                let channel = &mut *guard;
+                                if let Some(c) = channel.as_mut() {
+                                    let mask = mask[batch_idx];
+                                    let tokens_data = tokens_data[batch_idx];
 
-                                // The channel has changed so skip the update.
-                                if Some(c.id) != channel_ids[batch_idx] {
-                                    return None;
-                                }
-                                if (mask & MASK_ACTIVE) > 0 || (mask & MASK_MARKER_RECEIVED) > 0 {
-                                    c.steps += 1;
-                                    match tokens_data {
-                                        0 | 3 => {
-                                            if !word.is_empty() {
-                                                let msgs = vec![
-                                                    moshi::asr::AsrMsg::Word {
-                                                        tokens: std::mem::take(word),
-                                                        start_time: *start_step as f64 / 12.5,
-                                                        batch_idx,
-                                                    },
-                                                    moshi::asr::AsrMsg::EndWord {
-                                                        stop_time: c.steps as f64 / 12.5,
-                                                        batch_idx,
-                                                    },
-                                                ];
-                                                Some(MsgsOut { msgs })
-                                            } else {
-                                                word.clear();
+                                    // The channel has changed so skip the update.
+                                    if Some(c.id) != channel_ids[batch_idx] {
+                                        return None;
+                                    }
+                                    if (mask & MASK_ACTIVE) > 0 || (mask & MASK_MARKER_RECEIVED) > 0
+                                    {
+                                        c.steps += 1;
+                                        match tokens_data {
+                                            0 | 3 => {
+                                                if !word.is_empty() {
+                                                    let msgs = vec![
+                                                        moshi::asr::AsrMsg::Word {
+                                                            tokens: std::mem::take(word),
+                                                            start_time: *start_step as f64 / 12.5,
+                                                            batch_idx,
+                                                        },
+                                                        moshi::asr::AsrMsg::EndWord {
+                                                            stop_time: c.steps as f64 / 12.5,
+                                                            batch_idx,
+                                                        },
+                                                    ];
+                                                    Some(MsgsOut { msgs })
+                                                } else {
+                                                    word.clear();
+                                                    None
+                                                }
+                                            }
+                                            _ => {
+                                                if word.is_empty() {
+                                                    *start_step = c.steps;
+                                                }
+                                                word.push(tokens_data);
                                                 None
                                             }
                                         }
-                                        _ => {
-                                            if word.is_empty() {
-                                                *start_step = c.steps;
-                                            }
-                                            word.push(tokens_data);
-                                            None
-                                        }
+                                    } else if (mask & MASK_END_OF_STREAM) > 0 {
+                                        word.clear();
+                                        None
+                                    } else {
+                                        None
                                     }
-                                } else if (mask & MASK_END_OF_STREAM) > 0 {
-                                    word.clear();
-                                    None
                                 } else {
+                                    // The channel has been closed, so we skip the update.
                                     None
                                 }
-                            } else {
-                                // The channel has been closed, so we skip the update.
-                                None
-                            }
-                        })
+                            },
+                        )
                         .collect::<Vec<_>>();
                     todo.into_iter().for_each(|t| asr_msgs.extend(t.msgs));
                     asr_msgs.push(moshi::asr::AsrMsg::Step {
@@ -560,18 +566,20 @@ impl M {
                 error_metrics::record_connection_error("capacity", "py_batched_asr");
                 // Send error message in protocol format
                 let mut msg = vec![];
-                OutMsg::Error { message: "Server at capacity - no free channels available".into() }.serialize(
-                    &mut rmp_serde::Serializer::new(&mut msg)
-                        .with_human_readable()
-                        .with_struct_map(),
-                )?;
+                OutMsg::Error { message: "Server at capacity - no free channels available".into() }
+                    .serialize(
+                        &mut rmp_serde::Serializer::new(&mut msg)
+                            .with_human_readable()
+                            .with_struct_map(),
+                    )?;
                 sender.send(ws::Message::binary(msg)).await?;
                 // Close with proper close code
                 crate::utils::close_with_reason(
                     &mut sender,
                     CloseCode::ServerAtCapacity,
                     Some("No free channels available, please retry later"),
-                ).await?;
+                )
+                .await?;
                 anyhow::bail!("no free channels")
             }
         };

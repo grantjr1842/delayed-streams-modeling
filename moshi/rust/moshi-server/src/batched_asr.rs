@@ -14,9 +14,9 @@ use candle::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use std::collections::{BinaryHeap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::task;
 use tokio::time::{timeout, Duration};
-use std::time::Instant;
 
 const FRAME_SIZE: usize = 1920;
 const SEND_PING_EVERY: Duration = Duration::from_secs(10);
@@ -315,7 +315,7 @@ impl BatchedAsrInner {
         let mut mask = vec![false; state.batch_size()];
         let mut channel_ids = vec![None; state.batch_size()];
         let mut batch_pcm = vec![0f32; FRAME_SIZE * state.batch_size()];
-        
+
         let todo = batch_pcm
             .par_chunks_mut(FRAME_SIZE)
             .zip(self.channels.par_iter())
@@ -327,7 +327,7 @@ impl BatchedAsrInner {
                 let channel = &mut *guard;
                 let c = channel.as_mut()?;
                 *channel_id_out = Some(c.id);
-                
+
                 if c.out_tx.is_closed() {
                     *channel = None;
                     None
@@ -374,6 +374,7 @@ impl BatchedAsrInner {
                             }
                             None
                         }
+                        Ok(InMsg::Ping) => None,
                         Err(TryRecvError::Empty) => {
                             // Even if we haven't received new data, we process the existing one.
                             if let Some(bpcm) = c.extend_data(vec![]) {
@@ -615,18 +616,20 @@ impl BatchedAsr {
                 error_metrics::record_connection_error("capacity", "batched_asr");
                 // Send error message in protocol format
                 let mut msg = vec![];
-                OutMsg::Error { message: "Server at capacity - no free channels available".into() }.serialize(
-                    &mut rmp_serde::Serializer::new(&mut msg)
-                        .with_human_readable()
-                        .with_struct_map(),
-                )?;
+                OutMsg::Error { message: "Server at capacity - no free channels available".into() }
+                    .serialize(
+                        &mut rmp_serde::Serializer::new(&mut msg)
+                            .with_human_readable()
+                            .with_struct_map(),
+                    )?;
                 sender.send(ws::Message::binary(msg)).await?;
                 // Close with proper close code
                 crate::utils::close_with_reason(
                     &mut sender,
                     CloseCode::ServerAtCapacity,
                     Some("No free channels available, please retry later"),
-                ).await?;
+                )
+                .await?;
                 anyhow::bail!("no free channels")
             }
         };
@@ -703,9 +706,6 @@ impl BatchedAsr {
     }
 
     pub fn used_slots(&self) -> usize {
-        self.channels
-            .iter()
-            .filter(|v| v.lock().unwrap().is_some())
-            .count()
+        self.channels.iter().filter(|v| v.lock().unwrap().is_some()).count()
     }
 }

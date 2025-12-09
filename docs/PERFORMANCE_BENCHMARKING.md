@@ -231,3 +231,53 @@ The benchmarking module integrates with Prometheus:
 - `request_latency_seconds` (histogram)
 
 Access at `/metrics` endpoint.
+
+## 8. Initial Audit Findings
+
+### Device Transfer Audit (`.to_device()` calls)
+
+Found in `moshi-server/src/`:
+
+| File | Location | Transfer | Purpose |
+|------|----------|----------|---------|
+| `tts.rs` | audio_tokens processing | GPU → CPU | Token conversion for output |
+| `asr.rs` | text_tokens output | GPU → CPU | Text token decoding |
+| `asr.rs` | logits processing | GPU → CPU | Output processing |
+| `batched_asr.rs` | text_tokens | GPU → CPU | Text token decoding |
+| `batched_asr.rs` | logits | GPU → CPU | Output processing |
+
+**Observation**: All transfers are GPU → CPU for output processing, which is necessary for returning results to clients. These are not redundant transfers.
+
+**Potential Optimization**: 
+- Batch multiple outputs before transfer
+- Use pinned memory for faster transfers
+- Consider async transfers with CUDA streams
+
+### Next Steps (Runtime Testing Required)
+
+The following tasks require runtime profiling on GPU hardware:
+
+1. **CUDA Kernel Profiling** (nsys/nvprof)
+   - Measure kernel execution time
+   - Identify hotspots
+   - Check for kernel serialization
+
+2. **Event Tracking Impact**
+   - Benchmark with `candle::cuda_backend::set_event_tracking(false)`
+   - Compare latency and memory usage
+
+3. **Flash Attention Evaluation**
+   - Check candle-flash-attn compatibility with moshi models
+   - Benchmark attention-heavy operations
+
+4. **CUDA Graphs**
+   - Identify inference loops suitable for graph capture
+   - Measure launch overhead reduction
+
+5. **Memory Pooling**
+   - Profile allocation patterns
+   - Implement pooling for frequently allocated tensors
+
+6. **WebSocket Compression**
+   - Enable permessage-deflate
+   - Measure bandwidth vs CPU tradeoff

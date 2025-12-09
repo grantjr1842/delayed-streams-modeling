@@ -275,8 +275,8 @@ pub fn model_dtype(over: Option<&str>, dev: &Device) -> Result<DType> {
 
 /// Reserved VRAM for CUDA runtime, driver overhead, and safety margin.
 /// This accounts for CUDA context, kernel launches, and other system allocations.
-/// Default increased to 2560MB (2.5GB) to handle fragmentation and loading spikes.
-pub const DEFAULT_VRAM_RESERVED_MB: u64 = 2560;
+/// Default set to 2048MB (2GB) to balance safety with maximizing batch size on 8GB cards.
+pub const DEFAULT_VRAM_RESERVED_MB: u64 = 2048;
 
 /// Default per-batch-item memory cost in MB.
 /// This covers activations, KV cache, and intermediate tensors per concurrent stream.
@@ -309,6 +309,8 @@ pub struct GpuInfo {
     pub compute_major: u32,
     /// Compute capability minor version (e.g., 5 for SM 7.5)
     pub compute_minor: u32,
+    /// GPU utilization (percent)
+    pub utilization: u32,
 }
 
 impl GpuInfo {
@@ -392,6 +394,12 @@ impl GpuInfo {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_MIMI_ESTIMATE_MB);
 
+        // Adjust per_batch_item_mb based on dtype
+        // We assume the default (600MB) is tuned for F16/BF16 (2 bytes).
+        // For F32 (4 bytes), we double it.
+        // For Q8/Q4 (1 byte or less), we could halve it, but we'll be conservative and floor at 2 bytes divisor.
+        let adjusted_per_batch_item_mb = (per_batch_item_mb * dtype_bytes) / 2;
+
         // Model weights in MB: params × bytes_per_param / 1M
         let model_weights_mb = ((model_params_billions * 1e9) as u64 * dtype_bytes) / (1024 * 1024);
         
@@ -402,19 +410,29 @@ impl GpuInfo {
             .saturating_sub(mimi_mb);
         
         // Batch size = available / per_item_cost
-        let max_batch_size = if per_batch_item_mb > 0 {
-            (available_for_batching_mb / per_batch_item_mb) as usize
+        let max_batch_size = if adjusted_per_batch_item_mb > 0 {
+            (available_for_batching_mb / adjusted_per_batch_item_mb) as usize
         } else {
             1
         };
         
+        let recommended_batch_size = max_batch_size.max(1);
+
+        // Warn if we are potentially oversubscribing VRAM even at batch size 1
+        if available_for_batching_mb == 0 {
+             tracing::warn!(
+                "Available VRAM for batching is 0MB. Defaulting to batch size 1, but OOM is likely. \
+                 Consider reducing VRAM_RESERVED_MB or using a smaller model."
+            );
+        }
+
         BatchSizeCalculation {
             free_vram_mb,
             reserved_mb,
             model_weights_mb,
-            per_batch_item_mb,
+            per_batch_item_mb: adjusted_per_batch_item_mb,
             available_for_batching_mb,
-            recommended_batch_size: max_batch_size.max(1),
+            recommended_batch_size,
             dtype_bytes,
             model_params_billions,
             mimi_mb,
@@ -651,6 +669,7 @@ pub fn get_gpu_info() -> Result<GpuInfo> {
     let nvml = Nvml::init()?;
     let device = nvml.device_by_index(0)?;
     let memory_info = device.memory_info()?;
+    let utilization = device.utilization_rates().map(|u| u.gpu).unwrap_or(0);
     let name = device.name()?;
     let compute_cap = device.cuda_compute_capability()?;
     
@@ -660,6 +679,7 @@ pub fn get_gpu_info() -> Result<GpuInfo> {
         name,
         compute_major: compute_cap.major as u32,
         compute_minor: compute_cap.minor as u32,
+        utilization,
     })
 }
 

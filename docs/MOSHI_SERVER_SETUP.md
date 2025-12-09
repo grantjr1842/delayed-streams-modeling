@@ -40,15 +40,18 @@ To prevent `CUDA_ERROR_OUT_OF_MEMORY` on the 8GB card, we implemented automatic 
 - **Auto-Config Logic (`src/main.rs`)**:
   - In `Command::Worker`, the server now detects the GPU before starting.
   - **Batch Size Calculation**:
-    - `available_vram - reserved_vram (default 512MB)`
-    - `max_batch_size = free_vram / per_item_vram (default 400MB)`
+    - `available_vram - reserved_vram (default 2048MB)`
+    - `max_batch_size = available_vram / per_item_vram`
+    - `per_item_vram` (default 600MB for F16) is adjusted based on actual model dtype (e.g., doubled for F32).
   - **Config Adjustment**:
     - Iterates through `BatchedAsr` modules and reduces `batch_size` if it exceeds the calculated safe limit.
     - Sets `dtype_override` based on compute capability (though see "Turing Compatibility" below).
+    - Warns if VRAM is insufficient even for batch size 1.
 
 ### Environment Variables
-- `MOSHI_MODEL_PARAMS_BILLIONS`: Override model size hint (default 7.0).
-- `MOSHI_PER_BATCH_ITEM_MB`: Override VRAM per batch item estimate (default 400).
+- `MOSHI_MODEL_PARAMS_BILLIONS`: Override model size hint (default 1.0).
+- `MOSHI_PER_BATCH_ITEM_MB`: Override VRAM per batch item estimate (default 600, scales with dtype).
+- `MOSHI_VRAM_RESERVED_MB`: Override reserved VRAM (default 2048).
 - `MOSHI_API_KEY`: Comma-separated list of authorized API keys (replaces hardcoded `authorized_ids` in config).
 
 ## 3. Environment Configuration
@@ -247,6 +250,15 @@ The server exposes Prometheus metrics for error tracking and observability at `/
 | `ws_close_total` | code, reason | WebSocket close events by close code |
 | `connection_error_total` | error_type, module | Connection errors by type and module |
 | `auth_error_total` | error_type | Authentication errors by type |
+
+### System Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `system_free_vram_bytes` | Free VRAM in bytes |
+| `system_used_vram_bytes` | Used VRAM in bytes |
+| `system_total_vram_bytes` | Total VRAM in bytes |
+| `system_gpu_utilization_percent` | GPU utilization percentage (0-100) |
 
 ### Error Types
 

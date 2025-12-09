@@ -182,7 +182,7 @@ export const useSocket = ({
     const intervalId = setInterval(() => {
       if (
         lastMessageTime.current &&
-        Date.now() - lastMessageTime.current > 10000
+        Date.now() - lastMessageTime.current > 60000
       ) {
         console.log("closing socket due to inactivity", socket);
         socket?.close(4006, "Client inactivity timeout");

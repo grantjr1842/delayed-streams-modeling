@@ -313,16 +313,21 @@ impl BatchedAsrInner {
         }
 
         let mut mask = vec![false; state.batch_size()];
-        let mut channels = self.channels.lock().unwrap();
-        let mut batch_pcm = vec![0f32; FRAME_SIZE * channels.len()];
-        let channel_ids = channels.iter().map(|c| c.as_ref().map(|c| c.id)).collect::<Vec<_>>();
+        let mut channel_ids = vec![None; state.batch_size()];
+        let mut batch_pcm = vec![0f32; FRAME_SIZE * state.batch_size()];
+        
         let todo = batch_pcm
             .par_chunks_mut(FRAME_SIZE)
-            .zip(channels.par_iter_mut())
+            .zip(self.channels.par_iter())
             .zip(mask.par_iter_mut())
+            .zip(channel_ids.par_iter_mut())
             .enumerate()
-            .flat_map(|(bid, ((out_pcm, channel), mask))| -> Option<Todo> {
+            .flat_map(|(bid, (((out_pcm, channel_mutex), mask), channel_id_out))| -> Option<Todo> {
+                let mut guard = channel_mutex.lock().unwrap();
+                let channel = &mut *guard;
                 let c = channel.as_mut()?;
+                *channel_id_out = Some(c.id);
+                
                 if c.out_tx.is_closed() {
                     *channel = None;
                     None
@@ -405,7 +410,6 @@ impl BatchedAsrInner {
         mask: &moshi::StreamMask,
         ref_channel_ids: &[Option<ChannelId>],
     ) -> Result<()> {
-        let mut channels = self.channels.lock().unwrap();
         for asr_msg in asr_msgs.into_iter() {
             match asr_msg {
                 moshi::asr::AsrMsg::Word { tokens, start_time, batch_idx } => {
@@ -413,30 +417,33 @@ impl BatchedAsrInner {
                         text: self.text_tokenizer.decode_piece_ids(&tokens)?,
                         start_time,
                     };
-                    if let Some(c) = channels[batch_idx].as_ref() {
+                    let mut channel = self.channels[batch_idx].lock().unwrap();
+                    if let Some(c) = channel.as_ref() {
                         if c.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                            channels[batch_idx] = None;
+                            *channel = None;
                         }
                     }
                 }
                 moshi::asr::AsrMsg::EndWord { stop_time, batch_idx } => {
                     let msg = OutMsg::EndWord { stop_time };
-                    if let Some(c) = channels[batch_idx].as_ref() {
+                    let mut channel = self.channels[batch_idx].lock().unwrap();
+                    if let Some(c) = channel.as_ref() {
                         if c.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                            channels[batch_idx] = None;
+                            *channel = None;
                         }
                     }
                 }
                 moshi::asr::AsrMsg::Step { step_idx, prs } => {
-                    for (batch_idx, c) in channels.iter_mut().enumerate() {
+                    for (batch_idx, channel_mutex) in self.channels.iter().enumerate() {
                         if !mask.is_active(batch_idx) {
                             continue;
                         }
-                        if let Some(ch) = c.as_mut() {
+                        let mut channel = channel_mutex.lock().unwrap();
+                        if let Some(ch) = channel.as_mut() {
                             let prs = prs.iter().map(|p| p[batch_idx]).collect();
                             let msg = OutMsg::Step { step_idx, prs, buffered_pcm: ch.data.len() };
                             if ch.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                                *c = None;
+                                *channel = None;
                             }
                         }
                     }
@@ -445,9 +452,10 @@ impl BatchedAsrInner {
         }
         while let Some(m) = markers.peek() {
             if m.step_idx <= step_idx {
-                if let Some(c) = channels[m.batch_idx].as_ref() {
+                let mut channel = self.channels[m.batch_idx].lock().unwrap();
+                if let Some(c) = channel.as_ref() {
                     if c.send(OutMsg::Marker { id: m.marker_id }, Some(m.channel_id)).is_err() {
-                        channels[m.batch_idx] = None;
+                        *channel = None;
                     }
                 }
                 markers.pop();
@@ -459,7 +467,7 @@ impl BatchedAsrInner {
     }
 }
 
-type Channels = Arc<Mutex<Vec<Option<Channel>>>>;
+type Channels = Arc<Vec<Mutex<Option<Channel>>>>;
 
 pub struct BatchedAsr {
     channels: Channels,
@@ -498,8 +506,8 @@ impl BatchedAsr {
         };
         let text_tokenizer = sentencepiece::SentencePieceProcessor::open(&asr.text_tokenizer_file)
             .with_context(|| asr.text_tokenizer_file.clone())?;
-        let channels = (0..batch_size).map(|_| None).collect::<Vec<_>>();
-        let channels = Arc::new(Mutex::new(channels));
+        let channels = (0..batch_size).map(|_| Mutex::new(None)).collect::<Vec<_>>();
+        let channels = Arc::new(channels);
         let asr_delay_in_tokens =
             asr.conditioning_delay.map_or(asr.asr_delay_in_tokens, |v| (v * 12.5) as usize + 1);
         let batched_asr = BatchedAsrInner {
@@ -528,15 +536,14 @@ impl BatchedAsr {
     }
 
     fn channels(&self) -> Result<Option<(usize, InSend, OutRecv)>> {
-        let mut channels = self.channels.lock().unwrap();
-        // Linear scan to find an available channel. This is fairly inefficient, instead we should
-        // probably have a queue of available slots.
-        for (batch_idx, channel) in channels.iter_mut().enumerate() {
-            if channel.is_none() {
+        // Linear scan to find an available channel.
+        for (batch_idx, channel) in self.channels.iter().enumerate() {
+            let mut guard = channel.lock().unwrap();
+            if guard.is_none() {
                 let (in_tx, in_rx) = std::sync::mpsc::channel::<InMsg>();
                 let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<OutMsg>();
                 let c = Channel::new(in_rx, out_tx)?;
-                *channel = Some(c);
+                *guard = Some(c);
                 return Ok(Some((batch_idx, in_tx, out_rx)));
             }
         }
@@ -696,6 +703,9 @@ impl BatchedAsr {
     }
 
     pub fn used_slots(&self) -> usize {
-        self.channels.lock().unwrap().iter().filter(|v| v.is_some()).count()
+        self.channels
+            .iter()
+            .filter(|v| v.lock().unwrap().is_some())
+            .count()
     }
 }

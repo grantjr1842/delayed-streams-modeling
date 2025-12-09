@@ -15,6 +15,7 @@ use std::time::Instant;
 
 mod asr;
 mod auth;
+mod banner;
 mod batched_asr;
 mod lm;
 mod metrics;
@@ -747,17 +748,41 @@ async fn main_() -> Result<()> {
             };
             let _guard = tracing_init(log_config)?;
 
+            // Print startup banner (before tracing span so it appears first)
+            let banner = banner::ServerBanner::new();
+            if !args.silent {
+                banner.print_logo();
+                let version = utils::BuildInfo::new().git_describe();
+                if banner::supports_color() {
+                    println!(
+                        "  {} v{}\n",
+                        owo_colors::OwoColorize::bold(&"moshi-server"),
+                        owo_colors::OwoColorize::bright_white(&version)
+                    );
+                } else {
+                    println!("  moshi-server v{}\n", version);
+                }
+            }
+
             // Create a span for the startup sequence
             let startup_span = tracing::info_span!("startup");
             let _enter = startup_span.enter();
 
             // Log Better Auth status (after tracing is initialized)
-            if std::env::var("BETTER_AUTH_SECRET").is_ok() {
+            let auth_enabled = std::env::var("BETTER_AUTH_SECRET").is_ok();
+            if auth_enabled {
                 tracing::info!("Better Auth JWT validation enabled (BETTER_AUTH_SECRET is set)");
             }
 
+            // Variables to collect for banner
+            let mut gpu_name: Option<String> = None;
+            let mut gpu_vram_mb: Option<u64> = None;
+            let mut effective_batch_size: Option<usize> = None;
+
             // Auto-detect GPU capabilities and adjust configuration
             if let Ok(gpu_info) = utils::get_gpu_info() {
+                gpu_name = Some(gpu_info.name.clone());
+                gpu_vram_mb = Some(gpu_info.total_vram_mb());
                 // Extract model info from the first LM-bearing module for logging
                 let model_info = config.modules.values().find_map(|m| match m {
                     ModuleConfig::Lm { config: c, .. } => Some(utils::ModelInfo::from_lm_config(c)),
@@ -828,6 +853,7 @@ async fn main_() -> Result<()> {
                                 );
                                 *batch_size = max_safe_batch_size.max(1);
                             }
+                            effective_batch_size = Some(*batch_size);
                         }
                         ModuleConfig::Asr { config: asr_config, .. } => {
                             if asr_config.dtype_override.is_none() {
@@ -877,6 +903,47 @@ async fn main_() -> Result<()> {
 
             // Start background metrics updater
             spawn_metrics_updater();
+
+            // Print configuration summary box (if not silent)
+            if !args.silent {
+                // Collect module info for the banner
+                let module_infos: Vec<banner::ModuleInfo> = shared_state
+                    .config
+                    .modules
+                    .iter()
+                    .map(|(name, cfg)| {
+                        let (module_type, path) = match cfg {
+                            ModuleConfig::Tts { path, .. } => ("TTS", path.clone()),
+                            ModuleConfig::Asr { path, .. } => ("ASR", path.clone()),
+                            ModuleConfig::BatchedAsr { path, .. } => ("BatchedASR", path.clone()),
+                            ModuleConfig::PyBatchedAsr { path, .. } => ("PyBatchedASR", path.clone()),
+                            ModuleConfig::Mimi { send_path, .. } => ("Mimi", send_path.clone()),
+                            ModuleConfig::Lm { path, .. } => ("LM", path.clone()),
+                            ModuleConfig::Py { path, .. } => ("Py", path.clone()),
+                            ModuleConfig::PyPost { path, .. } => ("PyPost", path.clone()),
+                        };
+                        banner::ModuleInfo {
+                            name: name.clone(),
+                            module_type: module_type.to_string(),
+                            path,
+                        }
+                    })
+                    .collect();
+
+                let banner_config = banner::BannerConfig {
+                    version: utils::BuildInfo::new().git_describe(),
+                    addr: args.addr.clone(),
+                    port: args.port,
+                    modules: module_infos,
+                    auth_enabled,
+                    gpu_name,
+                    gpu_vram_mb,
+                    batch_size: effective_batch_size,
+                    instance_name: shared_state.config.instance_name.clone(),
+                };
+
+                banner.print_banner(&banner_config);
+            }
 
             // End startup span before starting the server
             drop(_enter);

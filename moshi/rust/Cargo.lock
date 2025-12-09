@@ -2762,6 +2762,7 @@ dependencies = [
  "nvml-wrapper",
  "ogg",
  "opus",
+ "owo-colors",
  "prometheus",
  "pyo3",
  "pyo3-ffi",

@@ -30,6 +30,7 @@ log = { workspace = true }
 moshi = { workspace = true }
 native-tls = { workspace = true }
 nvml-wrapper = { workspace = true }
+owo-colors = { workspace = true }
 numpy = { workspace = true }
 ogg = { workspace = true }
 opus = { workspace = true }

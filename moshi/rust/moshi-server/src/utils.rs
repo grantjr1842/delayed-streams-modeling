@@ -34,6 +34,11 @@ impl BuildInfo {
             cargo_target_triple: String::from(env!("VERGEN_CARGO_TARGET_TRIPLE")),
         }
     }
+
+    /// Returns the git describe version string (e.g., "v0.6.4-5-gabcdef1")
+    pub fn git_describe(&self) -> String {
+        self.git_describe.clone()
+    }
 }
 
 pub fn replace_env_vars(input: &str) -> String {

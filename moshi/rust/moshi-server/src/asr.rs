@@ -19,6 +19,7 @@ pub enum InMsg {
     Marker { id: i64 },
     Audio { pcm: Vec<f32> },
     OggOpus { data: Vec<u8> },
+    Ping,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -153,6 +154,7 @@ impl Asr {
                     }
                     InMsg::OggOpus { data } => ogg_opus_decoder.decode(&data)?.map(|v| v.to_vec()),
                     InMsg::Audio { pcm } => Some(pcm),
+                    InMsg::Ping => None,
                 };
                 if let Some(pcm) = pcm {
                     tracing::info!("received audio {}", pcm.len());

@@ -36,6 +36,10 @@ pub enum AuthErrorCode {
     ExpiredToken,
     MissingCredentials,
     JwtValidationFailed,
+    /// Account is pending admin approval
+    PendingApproval,
+    /// Account has been rejected by admin
+    AccountRejected,
 }
 
 impl std::fmt::Display for AuthErrorCode {
@@ -45,6 +49,8 @@ impl std::fmt::Display for AuthErrorCode {
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::MissingCredentials => write!(f, "missing_credentials"),
             Self::JwtValidationFailed => write!(f, "jwt_validation_failed"),
+            Self::PendingApproval => write!(f, "pending_approval"),
+            Self::AccountRejected => write!(f, "account_rejected"),
         }
     }
 }
@@ -103,6 +109,34 @@ impl AuthError {
         }
     }
 
+    /// Account is pending admin approval
+    pub fn pending_approval(email: Option<&str>) -> Self {
+        let message = match email {
+            Some(e) => format!("Account {} is pending admin approval", e),
+            None => "Account is pending admin approval".to_string(),
+        };
+        Self {
+            error: "forbidden",
+            code: AuthErrorCode::PendingApproval,
+            message,
+            hint: "Please wait for an administrator to approve your account",
+        }
+    }
+
+    /// Account has been rejected by admin
+    pub fn account_rejected(email: Option<&str>) -> Self {
+        let message = match email {
+            Some(e) => format!("Account {} has been rejected", e),
+            None => "Account has been rejected".to_string(),
+        };
+        Self {
+            error: "forbidden",
+            code: AuthErrorCode::AccountRejected,
+            message,
+            hint: "Contact the administrator for more information",
+        }
+    }
+
     /// Get the error code as a string for metrics labels
     pub fn error_type(&self) -> &'static str {
         match self.code {
@@ -110,6 +144,8 @@ impl AuthError {
             AuthErrorCode::ExpiredToken => "expired_token",
             AuthErrorCode::MissingCredentials => "missing_credentials",
             AuthErrorCode::JwtValidationFailed => "jwt_validation_failed",
+            AuthErrorCode::PendingApproval => "pending_approval",
+            AuthErrorCode::AccountRejected => "account_rejected",
         }
     }
 }

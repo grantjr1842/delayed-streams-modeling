@@ -52,7 +52,6 @@ To prevent `CUDA_ERROR_OUT_OF_MEMORY` on the 8GB card, we implemented automatic 
 - `MOSHI_MODEL_PARAMS_BILLIONS`: Override model size hint (default 1.0).
 - `MOSHI_PER_BATCH_ITEM_MB`: Override VRAM per batch item estimate (default 600, scales with dtype).
 - `MOSHI_VRAM_RESERVED_MB`: Override reserved VRAM (default 2048).
-- `MOSHI_API_KEY`: Comma-separated list of authorized API keys (replaces hardcoded `authorized_ids` in config).
 
 ## 3. Environment Configuration
 
@@ -62,7 +61,6 @@ The server automatically loads environment variables from a `.env` file in the c
 Simply create a `.env` file (see `.env.example` for template):
 ```bash
 # .env
-MOSHI_API_KEY=my_secret_token,another_token
 BETTER_AUTH_SECRET=your_jwt_secret_here
 ```
 
@@ -75,15 +73,13 @@ The `.env` file is loaded before any configuration parsing, so all environment v
 
 ### Authentication
 
-The server supports multiple authentication methods, with priority order:
+The server uses Better Auth for authentication. Supported methods:
 
-1. **Legacy API Key** - Via `kyutai-api-key` header or `auth_id` query parameter
-2. **Bearer Token** - Via `Authorization: Bearer <jwt>` header
-3. **JWT Query Parameter** - Via `?token=<jwt>` query parameter (useful for WebSockets where setting headers is difficult)
-4. **Session Cookie** - Via `better-auth.session_token` cookie
+1. **Bearer Token** - Via `Authorization: Bearer <jwt>` header
+2. **JWT Query Parameter** - Via `?token=<jwt>` query parameter (useful for WebSockets where setting headers is difficult)
+3. **Session Cookie** - Via `better-auth.session_token` cookie
 
 **Environment Variables:**
-- `MOSHI_API_KEY`: Comma-separated list of authorized API keys
 - `BETTER_AUTH_SECRET`: JWT secret for Better Auth validation (must match auth-server)
 
 ### User Approval Status

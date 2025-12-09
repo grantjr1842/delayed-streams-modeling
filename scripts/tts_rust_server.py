@@ -24,7 +24,6 @@ SAMPLE_RATE = 24000
 
 TTS_TEXT = "Hello, this is a test of the moshi text to speech system, this should result in some nicely sounding generated voice."
 DEFAULT_DSM_TTS_VOICE_REPO = "kyutai/tts-voices"
-AUTH_TOKEN = "public_token"
 
 
 async def receive_messages(websocket: websockets.ClientConnection, output_queue):
@@ -148,23 +147,25 @@ async def websocket_client():
         help="The URL of the server to which to send the audio",
         default="ws://127.0.0.1:8080",
     )
-    parser.add_argument("--api-key", default="public_token")
+    parser.add_argument(
+        "--token",
+        help="Better Auth JWT token for authentication (get from browser session)",
+        default=None,
+    )
     args = parser.parse_args()
 
     params = {"voice": args.voice, "format": "PcmMessagePack"}
+    # Add token to query params if provided for Better Auth JWT authentication
+    if args.token:
+        params["token"] = args.token
     uri = f"{args.url}/api/tts_streaming?{urlencode(params)}"
     print(uri)
 
     if args.inp == "-":
         if sys.stdin.isatty():  # Interactive
             print("Enter text to synthesize (Ctrl+D to end input):")
-    headers = {"kyutai-api-key": args.api_key}
 
-    # For clients that don't support the `additional_headers` parameter when connecting
-    # (notably: JS libraries like react-use-websocket),
-    # you can also provide the API key in the query string with the "auth_id" key,
-    # i.e. adding "&auth_id=public_token" at the end of `uri`
-    async with websockets.connect(uri, additional_headers=headers) as websocket:
+    async with websockets.connect(uri) as websocket:
         print("connected")
 
         async def send_loop():

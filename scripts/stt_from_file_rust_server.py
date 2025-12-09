@@ -137,12 +137,11 @@ async def _shutdown_session(websocket, *tasks: asyncio.Task) -> None:
     await _close_websocket(websocket)
 
 
-async def stream_audio(url: str, api_key: str, rtf: float):
+async def stream_audio(url: str, token: str | None, rtf: float):
     """Stream audio data to a WebSocket server."""
-    headers = {"kyutai-api-key": api_key}
-
-    # Instead of using the header, you can authenticate by adding `?auth_id={api_key}` to the URL
-    async with websockets.connect(url, additional_headers=headers) as websocket:
+    # Authenticate via Better Auth JWT token in query string
+    ws_url = f"{url}?token={token}" if token else url
+    async with websockets.connect(ws_url) as websocket:
         send_task = asyncio.create_task(send_messages(websocket, rtf))
         receive_task = asyncio.create_task(receive_messages(websocket))
         cancelled = False
@@ -185,7 +184,11 @@ if __name__ == "__main__":
         help="The url of the server to which to send the audio",
         default="ws://127.0.0.1:8080",
     )
-    parser.add_argument("--api-key", default="public_token")
+    parser.add_argument(
+        "--token",
+        help="Better Auth JWT token for authentication (get from browser session)",
+        default=None,
+    )
     parser.add_argument(
         "--rtf",
         type=float,
@@ -195,7 +198,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     url = f"{args.url}/api/asr-streaming"
-    transcript = asyncio.run(stream_audio(url, args.api_key, args.rtf))
+    transcript = asyncio.run(stream_audio(url, args.token, args.rtf))
 
     print()
     print()

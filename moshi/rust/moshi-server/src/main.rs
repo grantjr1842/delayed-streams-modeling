@@ -243,8 +243,7 @@ pub struct Config {
     pub warmup: WarmupConfig,
     #[serde(default)]
     pub modules: std::collections::HashMap<String, ModuleConfig>,
-    pub authorized_ids: std::collections::HashSet<String>,
-    /// Authentication configuration derived from file + environment.
+    /// Authentication configuration derived from environment.
     #[serde(skip)]
     #[serde(default)]
     pub auth: auth::AuthConfig,
@@ -256,10 +255,8 @@ impl Config {
         let config = std::fs::read_to_string(p)?;
         let mut config: Self = toml::from_str(&config)?;
 
-        // Derive auth config from file + environment.
-        let auth_cfg = auth::AuthConfig::from_env(config.authorized_ids.clone());
-        config.authorized_ids = auth_cfg.authorized_ids.clone();
-        config.auth = auth_cfg;
+        // Derive auth config from environment.
+        config.auth = auth::AuthConfig::from_env();
 
         for (_, c) in config.modules.iter_mut() {
             match c {
@@ -1144,11 +1141,9 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         req: axum::Json<TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts query {req:?}");
-        match auth::check_with_user(&headers, None, None, &state.0 .1.config.authorized_ids) {
+        match auth::check_with_user(&headers, None) {
             Ok(claims) => {
-                if let Some(c) = claims {
-                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
-                }
+                tracing::debug!(user_id = %claims.user.id, session_id = %claims.session.id, "authenticated via JWT");
             }
             Err(err) => return Ok(err.into_response()),
         }
@@ -1185,23 +1180,25 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
             tracing::Span::current().record("client_ip", ip);
         }
         let auth_result =
-            auth::check_with_user(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+            auth::check_with_user(&headers, req.token.as_deref());
 
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
         let upg =
             ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                    let _ = crate::utils::close_with_reason(
-                        &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
-                    return;
-                }
-                if let Ok(Some(c)) = auth_result {
-                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
+                match &auth_result {
+                    Err(err) => {
+                        tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                        let _ = crate::utils::close_with_reason(
+                            &mut socket,
+                            crate::protocol::CloseCode::AuthenticationFailed,
+                            Some("Authentication failed"),
+                        ).await;
+                        return;
+                    }
+                    Ok(claims) => {
+                        tracing::debug!(user_id = %claims.user.id, session_id = %claims.session.id, "authenticated via JWT");
+                    }
                 }
                 tts_websocket(socket, tts, tts_query, addr).await
             });
@@ -1507,7 +1504,7 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
         }
         tracing::info!("handling asr-streaming query");
         let auth_result =
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+            auth::check(&headers, req.token.as_deref());
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1559,7 +1556,7 @@ fn batched_asr_router(
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!(len = req.len(), "handling asr post query");
-        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None) {
             return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
@@ -1584,7 +1581,7 @@ fn batched_asr_router(
         }
         tracing::info!("handling batched asr-streaming query");
         let auth_result =
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+            auth::check(&headers, req.token.as_deref());
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1652,7 +1649,7 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
         req: axum::Json<py_module::TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py streaming post query {req:?}");
-        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None) {
             return Ok(err.into_response());
         }
         let wav_stream = state.0 .0.handle_query(&req).await?;
@@ -1675,7 +1672,7 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
         let auth_result =
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+            auth::check(&headers, req.token.as_deref());
 
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
@@ -1721,7 +1718,7 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py asr streaming post query {req:?}");
-        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None) {
             return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
@@ -1743,7 +1740,7 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
         let auth_result =
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+            auth::check(&headers, req.token.as_deref());
 
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
@@ -1804,7 +1801,7 @@ fn mimi_router(
         // It's tricky to set the headers of a websocket in javascript so we pass the token via the
         // query too.
         let auth_result = if state.0 .0.auth_recv() {
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.0 .1.config.authorized_ids)
+            auth::check(&headers, req.token.as_deref())
         } else {
             Ok(())
         };
@@ -1850,7 +1847,7 @@ fn mimi_router(
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
         let auth_result =
-            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.0 .1.config.authorized_ids);
+            auth::check(&headers, req.token.as_deref());
 
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),

@@ -34,21 +34,22 @@
       "title": "Verify and Tune Auto Batch Size Calculations",
       "branch": "feat/issue-56-vram-tuning",
       "tasks": [
-        {"description": "Review DEFAULT_VRAM_RESERVED_MB and other constants.", "done": false},
-        {"description": "Validate saturating_sub usage prevents underflow but might mask configuration errors.", "done": false},
-        {"description": "Check if mimi_mb estimate is accurate.", "done": false},
-        {"description": "Add memory usage tracking/metrics during runtime to validate static estimates.", "done": false},
-        {"description": "Consider making per_batch_item_mb dynamic based on model/dtype.", "done": false},
-        {"description": "Create detailed documentation for VRAM and batch size calculations (math and constants).", "done": false}
+        {"description": "Review DEFAULT_VRAM_RESERVED_MB and other constants.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
+        {"description": "Validate saturating_sub usage prevents underflow but might mask configuration errors.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
+        {"description": "Check if mimi_mb estimate is accurate.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
+        {"description": "Add memory usage tracking/metrics during runtime to validate static estimates.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
+        {"description": "Consider making per_batch_item_mb dynamic based on model/dtype.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
+        {"description": "Create detailed documentation for VRAM and batch size calculations (math and constants).", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"}
       ],
-      "current_task_index": 0,
-      "status": "in_progress",
+      "current_task_index": 6,
+      "status": "complete",
+      "completed_at": "2025-12-09T02:40:00Z",
       "github_issue": {
         "number": 56,
         "title": "Verify and Tune Auto Batch Size Calculations",
         "body": "Part of #54\n\n## Tasks\n- [ ] Review DEFAULT_VRAM_RESERVED_MB and other constants.\n- [ ] Validate saturating_sub usage prevents underflow but might mask configuration errors.\n- [ ] Check if mimi_mb estimate is accurate.\n- [ ] Add memory usage tracking/metrics during runtime to validate static estimates.\n- [ ] Consider making per_batch_item_mb dynamic based on model/dtype.\n- [ ] Create detailed documentation for VRAM and batch size calculations (math and constants)."
       },
-      "pr_number": null,
+      "pr_number": 61,
       "started_at": "2025-12-09T02:25:00Z"
     },
     {
@@ -62,15 +63,16 @@
         {"description": "Check for unnecessary data copying or cloning.", "done": false}
       ],
       "current_task_index": 0,
-      "status": "pending",
+      "status": "in_progress",
       "github_issue": {
         "number": 58,
-        "title": "Performance Analysis and Optimization"
+        "title": "Performance Analysis and Optimization",
+        "body": "Part of #54\n\n## Tasks\n- [ ] Profile startup and inference loop to identify bottlenecks.\n- [ ] Investigate optimization flags (LTO, codegen-units).\n- [ ] Analyze locking granularity (e.g. Arc<Mutex> usage).\n- [ ] Check for unnecessary data copying or cloning."
       },
       "pr_number": null,
-      "started_at": null
+      "started_at": "2025-12-09T02:45:00Z"
     }
   ],
-  "current_issue_index": 1,
-  "last_updated": "2025-12-09T02:20:00Z"
+  "current_issue_index": 2,
+  "last_updated": "2025-12-09T02:40:00Z"
 }

@@ -118,7 +118,7 @@ impl Drop for Channel {
     }
 }
 
-type Channels = Arc<Mutex<Vec<Option<Channel>>>>;
+type Channels = Arc<Vec<Mutex<Option<Channel>>>>;
 
 struct Inner {
     channels: Channels,
@@ -136,16 +136,21 @@ impl Inner {
         markers: &mut BinaryHeap<Marker>,
     ) -> Result<(Vec<i32>, Vec<Option<ChannelId>>)> {
         use rayon::prelude::*;
-        let mut channels = self.channels.lock().unwrap();
         let mut updates = vec![NODATA; batch_size];
-        let channel_ids = channels.iter().map(|c| c.as_ref().map(|c| c.id)).collect::<Vec<_>>();
-        let todo: Vec<Marker> = channels
-            .par_iter_mut()
+        let mut channel_ids = vec![None; batch_size];
+        
+        let todo: Vec<Marker> = self.channels
+            .par_iter()
             .zip(batch_pcm.par_chunks_mut(FRAME_SIZE))
             .zip(updates.par_iter_mut())
+            .zip(channel_ids.par_iter_mut())
             .enumerate()
-            .flat_map(|(batch_idx, ((channel, pcm_out), update))| {
+            .flat_map(|(batch_idx, (((channel_mutex, pcm_out), update), channel_id_out))| {
+                let mut guard = channel_mutex.lock().unwrap();
+                let channel = &mut *guard;
                 let c = channel.as_mut()?;
+                *channel_id_out = Some(c.id);
+                
                 if c.out_tx.is_closed() {
                     *channel = None;
                     None
@@ -270,14 +275,14 @@ impl Inner {
                         std::thread::sleep(std::time::Duration::from_millis(2));
                         return Ok(());
                     }
-                    let mut channels = self.channels.lock().unwrap();
-                    let c = channels.deref_mut();
-                    let todo = c
-                        .par_iter_mut()
+                    let todo = self.channels
+                        .par_iter()
                         .zip(current_word.par_iter_mut())
                         .zip(words_start_step.par_iter_mut())
                         .enumerate()
-                        .flat_map(|(batch_idx, ((channel, word), start_step))| -> Option<MsgsOut> {
+                        .flat_map(|(batch_idx, ((channel_mutex, word), start_step))| -> Option<MsgsOut> {
+                            let mut guard = channel_mutex.lock().unwrap();
+                            let channel = &mut *guard;
                             if let Some(c) = channel.as_mut() {
                                 let mask = mask[batch_idx];
                                 let tokens_data = tokens_data[batch_idx];
@@ -364,7 +369,6 @@ impl Inner {
         markers: &mut BinaryHeap<Marker>,
         ref_channel_ids: &[Option<ChannelId>],
     ) -> Result<()> {
-        let mut channels = self.channels.lock().unwrap();
         for asr_msg in asr_msgs.into_iter() {
             match asr_msg {
                 moshi::asr::AsrMsg::Word { tokens, start_time, batch_idx } => {
@@ -372,27 +376,30 @@ impl Inner {
                         text: self.text_tokenizer.decode_piece_ids(&tokens)?,
                         start_time,
                     };
-                    if let Some(c) = channels[batch_idx].as_ref() {
+                    let mut channel = self.channels[batch_idx].lock().unwrap();
+                    if let Some(c) = channel.as_ref() {
                         if c.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                            channels[batch_idx] = None;
+                            *channel = None;
                         }
                     }
                 }
                 moshi::asr::AsrMsg::EndWord { stop_time, batch_idx } => {
                     let msg = OutMsg::EndWord { stop_time };
-                    if let Some(c) = channels[batch_idx].as_ref() {
+                    let mut channel = self.channels[batch_idx].lock().unwrap();
+                    if let Some(c) = channel.as_ref() {
                         if c.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                            channels[batch_idx] = None;
+                            *channel = None;
                         }
                     }
                 }
                 moshi::asr::AsrMsg::Step { step_idx, prs } => {
-                    for (batch_idx, c) in channels.iter_mut().enumerate() {
-                        if let Some(ch) = c.as_mut() {
+                    for (batch_idx, channel_mutex) in self.channels.iter().enumerate() {
+                        let mut channel = channel_mutex.lock().unwrap();
+                        if let Some(ch) = channel.as_mut() {
                             let prs = prs[batch_idx].clone();
                             let msg = OutMsg::Step { step_idx, prs, buffered_pcm: ch.data.len() };
                             if ch.send(msg, ref_channel_ids[batch_idx]).is_err() {
-                                *c = None;
+                                *channel = None;
                             }
                         }
                     }
@@ -401,12 +408,12 @@ impl Inner {
         }
         while let Some(m) = markers.peek() {
             if m.step_idx <= step_idx {
-                if let Some(c) = channels[m.batch_idx].as_ref() {
+                let mut channel = self.channels[m.batch_idx].lock().unwrap();
+                if let Some(c) = channel.as_ref() {
                     if c.send(OutMsg::Marker { id: m.marker_id }, Some(m.channel_id)).is_err() {
-                        channels[m.batch_idx] = None;
+                        *channel = None;
                     }
                 }
-                channels[m.batch_idx] = None;
                 markers.pop();
             } else {
                 break;
@@ -459,8 +466,8 @@ impl M {
         let text_tokenizer =
             sentencepiece::SentencePieceProcessor::open(&config.text_tokenizer_file)
                 .with_context(|| config.text_tokenizer_file.clone())?;
-        let channels = (0..batch_size).map(|_| None).collect::<Vec<_>>();
-        let channels = Arc::new(Mutex::new(channels));
+        let channels = (0..batch_size).map(|_| Mutex::new(None)).collect::<Vec<_>>();
+        let channels = Arc::new(channels);
         let inner = Inner {
             app,
             channels: channels.clone(),
@@ -473,15 +480,14 @@ impl M {
     }
     // Returns None if no channel is available at the moment.
     fn channels(&self) -> Result<Option<(usize, InSend, OutRecv)>> {
-        let mut channels = self.channels.lock().unwrap();
-        // Linear scan to find an available channel. This is fairly inefficient, instead we should
-        // probably have a queue of available slots.
-        for (batch_idx, channel) in channels.iter_mut().enumerate() {
-            if channel.is_none() {
+        // Linear scan to find an available channel.
+        for (batch_idx, channel) in self.channels.iter().enumerate() {
+            let mut guard = channel.lock().unwrap();
+            if guard.is_none() {
                 let (in_tx, in_rx) = std::sync::mpsc::channel::<InMsg>();
                 let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<OutMsg>();
                 let c = Channel::new(in_rx, out_tx)?;
-                *channel = Some(c);
+                *guard = Some(c);
                 return Ok(Some((batch_idx, in_tx, out_rx)));
             }
         }
@@ -658,6 +664,6 @@ impl M {
     }
 
     pub fn used_slots(&self) -> usize {
-        self.channels.lock().unwrap().iter().filter(|v| v.is_some()).count()
+        self.channels.iter().filter(|v| v.lock().unwrap().is_some()).count()
     }
 }

@@ -18,6 +18,7 @@ mod auth;
 mod banner;
 mod batched_asr;
 mod lm;
+mod logging;
 mod metrics;
 mod mimi;
 mod protocol;
@@ -66,6 +67,10 @@ struct WorkerArgs {
     /// Use JSON structured logging
     #[clap(long)]
     json: bool,
+
+    /// Console log style: compact, pretty, or verbose (default: pretty)
+    #[clap(long, default_value = "pretty")]
+    log_style: String,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -558,6 +563,7 @@ struct LogConfig {
     max_size_mb: u64,
     max_files: usize,
     json: bool,
+    log_style: logging::LogStyle,
 }
 
 fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::WorkerGuard> {
@@ -621,7 +627,7 @@ fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::Wor
         // File-only logging
         tracing_subscriber::registry().with(file_layer).init();
     } else {
-        // Console layer: WITH ANSI colors for terminal (or JSON)
+        // Console layer: WITH custom formatter for terminal (or JSON)
         let console_layer = if config.json {
             let json_layer = tracing_subscriber::fmt::layer()
                 .json()
@@ -635,15 +641,17 @@ fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::Wor
             json_layer.boxed()
         } else {
             let use_ansi = std::io::stdout().is_terminal();
+            let show_file = config.log_style == logging::LogStyle::Verbose;
+
+            // Use custom pretty formatter with level icons
+            let pretty_formatter = logging::PrettyFormatter::new(timer)
+                .with_ansi(use_ansi)
+                .with_file(show_file)
+                .with_target(true)
+                .with_style(config.log_style);
+
             let text_layer = tracing_subscriber::fmt::layer()
-                .event_format(
-                    tracing_subscriber::fmt::format()
-                        .with_timer(timer)
-                        .with_file(true)
-                        .with_line_number(true)
-                        .with_target(true)
-                        .with_ansi(use_ansi),
-                )
+                .event_format(pretty_formatter)
                 .with_writer(std::io::stdout)
                 .with_filter(filter);
 
@@ -737,6 +745,12 @@ async fn main_() -> Result<()> {
             if std::env::var("RUST_LOG").is_err() {
                 std::env::set_var("RUST_LOG", format!("{},hyper=info,mio=info", args.log_level))
             }
+            // Parse log style (default to pretty if invalid)
+            let log_style = args.log_style.parse().unwrap_or_else(|e: String| {
+                eprintln!("Warning: {e}, using 'pretty'");
+                logging::LogStyle::Pretty
+            });
+
             let log_config = LogConfig {
                 log_dir: config.log_dir.clone(),
                 instance_name: config.instance_name.clone(),
@@ -745,6 +759,7 @@ async fn main_() -> Result<()> {
                 max_size_mb: args.log_max_size_mb,
                 max_files: args.log_max_files,
                 json: args.json,
+                log_style,
             };
             let _guard = tracing_init(log_config)?;
 

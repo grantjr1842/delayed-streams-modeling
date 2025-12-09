@@ -7,9 +7,9 @@
       "title": "Enhanced Logging System with Aesthetic Improvements",
       "branch": "feat/issue-70-enhanced-logging",
       "tasks": [
-        {"description": "Create ASCII art logo banner for server startup", "done": false},
-        {"description": "Add boxed configuration summary (port, modules, auth, GPU)", "done": false},
-        {"description": "Implement ServerBanner module with consistent styling utilities", "done": false},
+        {"description": "Create ASCII art logo banner for server startup", "done": true, "commit_sha": "458c8c21a97730eccf4acbed4fc1d49a1387f66f", "completed_at": "2025-12-09T17:15:00Z"},
+        {"description": "Add boxed configuration summary (port, modules, auth, GPU)", "done": true, "commit_sha": "458c8c21a97730eccf4acbed4fc1d49a1387f66f", "completed_at": "2025-12-09T17:15:00Z"},
+        {"description": "Implement ServerBanner module with consistent styling utilities", "done": true, "commit_sha": "458c8c21a97730eccf4acbed4fc1d49a1387f66f", "completed_at": "2025-12-09T17:15:00Z"},
         {"description": "Implement custom FormatEvent trait for beautiful console output", "done": false},
         {"description": "Add level-based icons (✓ INFO, ⚠ WARN, ✕ ERROR)", "done": false},
         {"description": "Add progress bar for model loading/warmup phases", "done": false},
@@ -18,10 +18,10 @@
         {"description": "Ensure file logs remain clean (no ANSI codes)", "done": false},
         {"description": "Update documentation in docs/MOSHI_SERVER_SETUP.md", "done": false}
       ],
-      "current_task_index": 0,
-      "status": "pending",
+      "current_task_index": 3,
+      "status": "in_progress",
       "pr_number": null,
-      "started_at": null
+      "started_at": "2025-12-09T17:10:00Z"
     },
     {
       "number": 71,
@@ -52,5 +52,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-09T17:03:00Z"
+  "last_updated": "2025-12-09T17:15:00Z"
 }

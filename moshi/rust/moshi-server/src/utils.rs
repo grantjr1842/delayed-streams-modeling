@@ -185,7 +185,7 @@ where
 {
     tokio::task::spawn(async move {
         match future.await {
-            Ok(_) => tracing::info!(?name, "task completed successfully"),
+            Ok(_) => tracing::debug!(?name, "task completed successfully"),
             Err(err) => tracing::error!(?name, ?err, "task failed"),
         }
     })
@@ -253,7 +253,7 @@ where
     F: FnOnce() -> Result<()> + Send + 'static,
 {
     tokio::task::spawn_blocking(move || match f() {
-        Ok(_) => tracing::info!(?name, "task completed successfully"),
+        Ok(_) => tracing::debug!(?name, "task completed successfully"),
         Err(err) => tracing::error!(?name, ?err, "task failed"),
     })
 }

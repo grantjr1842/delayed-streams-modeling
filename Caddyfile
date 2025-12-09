@@ -1,7 +1,7 @@
 # Moshi Server Reverse Proxy Configuration
 # See docs/REVERSE_PROXY_SETUP.md for details
 {
-	email {$CADDY_ADMIN_EMAIL:admin@fullen.dev}
+	email {$CADDY_ADMIN_EMAIL:grantfullenjr@gmail.com}
 }
 
 (transcribe_upstream) {

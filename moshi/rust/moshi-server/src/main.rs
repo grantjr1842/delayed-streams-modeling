@@ -749,6 +749,14 @@ async fn main_() -> Result<()> {
                     per_batch_item_mb,
                 );
                 batch_calc.log_breakdown();
+
+                if batch_calc.available_for_batching_mb == 0 {
+                    tracing::error!(
+                        "CRITICAL: VRAM insufficient for model weights + reserved memory. \
+                         Startup will likely fail with CUDA_ERROR_OUT_OF_MEMORY. \
+                         Try using a lower precision model, reducing VRAM_RESERVED_MB, or switching to the Low-RAM config."
+                    );
+                }
                 
                 let max_safe_batch_size = batch_calc.recommended_batch_size;
 

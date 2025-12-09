@@ -275,7 +275,8 @@ pub fn model_dtype(over: Option<&str>, dev: &Device) -> Result<DType> {
 
 /// Reserved VRAM for CUDA runtime, driver overhead, and safety margin.
 /// This accounts for CUDA context, kernel launches, and other system allocations.
-pub const VRAM_RESERVED_MB: u64 = 2048;
+/// Default increased to 2560MB (2.5GB) to handle fragmentation and loading spikes.
+pub const DEFAULT_VRAM_RESERVED_MB: u64 = 2560;
 
 /// Default per-batch-item memory cost in MB.
 /// This covers activations, KV cache, and intermediate tensors per concurrent stream.
@@ -289,7 +290,7 @@ pub const DEFAULT_MODEL_PARAMS_BILLIONS: f64 = 1.0;
 
 /// Estimated memory usage for Mimi audio tokenizer in MB.
 /// Mimi (~200M params) + decoder + buffers roughly take 1GB in F32.
-pub const MIMI_ESTIMATE_MB: u64 = 1024;
+pub const DEFAULT_MIMI_ESTIMATE_MB: u64 = 1024;
 
 // ============================================================================
 // GPU Information Struct
@@ -361,7 +362,7 @@ impl GpuInfo {
     /// # Memory Layout
     /// ```text
     /// Total Free VRAM
-    /// ├── Reserved (CUDA runtime, driver)     = VRAM_RESERVED_MB
+    /// ├── Reserved (CUDA runtime, driver)     = MOSHI_VRAM_RESERVED_MB
     /// ├── Model Weights (fixed cost)          = model_params × dtype_bytes
     /// └── Per-Batch Memory (scales with N)    = N × per_batch_item_mb
     /// ```
@@ -380,14 +381,25 @@ impl GpuInfo {
         let dtype_bytes = self.dtype_bytes();
         let free_vram_mb = self.free_vram_mb();
         
+        // Read configuration from env or use defaults
+        let reserved_mb: u64 = std::env::var("MOSHI_VRAM_RESERVED_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_VRAM_RESERVED_MB);
+
+        let mimi_mb: u64 = std::env::var("MOSHI_MIMI_ESTIMATE_MB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MIMI_ESTIMATE_MB);
+
         // Model weights in MB: params × bytes_per_param / 1M
         let model_weights_mb = ((model_params_billions * 1e9) as u64 * dtype_bytes) / (1024 * 1024);
         
         // Available for batching = free - reserved - model_weights - mimi
         let available_for_batching_mb = free_vram_mb
-            .saturating_sub(VRAM_RESERVED_MB)
+            .saturating_sub(reserved_mb)
             .saturating_sub(model_weights_mb)
-            .saturating_sub(MIMI_ESTIMATE_MB);
+            .saturating_sub(mimi_mb);
         
         // Batch size = available / per_item_cost
         let max_batch_size = if per_batch_item_mb > 0 {
@@ -398,13 +410,14 @@ impl GpuInfo {
         
         BatchSizeCalculation {
             free_vram_mb,
-            reserved_mb: VRAM_RESERVED_MB,
+            reserved_mb,
             model_weights_mb,
             per_batch_item_mb,
             available_for_batching_mb,
             recommended_batch_size: max_batch_size.max(1),
             dtype_bytes,
             model_params_billions,
+            mimi_mb,
         }
     }
 
@@ -454,6 +467,8 @@ pub struct BatchSizeCalculation {
     pub dtype_bytes: u64,
     /// Model size in billions of parameters
     pub model_params_billions: f64,
+    /// Mimi estimate used (MB)
+    pub mimi_mb: u64,
 }
 
 impl BatchSizeCalculation {
@@ -466,7 +481,7 @@ impl BatchSizeCalculation {
         tracing::info!("{}", line);
         tracing::info!("  Model: {:.1}B params × {} bytes = {} MB",
             self.model_params_billions, self.dtype_bytes, self.model_weights_mb);
-        tracing::info!("  + Mimi (est):      {:>6} MB", MIMI_ESTIMATE_MB);
+        tracing::info!("  + Mimi (est):      {:>6} MB", self.mimi_mb);
         tracing::info!("");
         tracing::info!("  Free VRAM:         {:>6} MB", self.free_vram_mb);
         tracing::info!("  − Reserved:        {:>6} MB  (CUDA runtime)", self.reserved_mb);

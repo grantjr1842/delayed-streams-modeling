@@ -168,6 +168,12 @@ pub struct UserData {
     /// User image URL
     #[serde(default)]
     pub image: Option<String>,
+    /// User role (e.g., "user", "admin")
+    #[serde(default)]
+    pub role: Option<String>,
+    /// User approval status (e.g., "pending", "approved", "rejected")
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Better Auth session claims structure

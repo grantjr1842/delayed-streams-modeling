@@ -7,7 +7,7 @@
       "title": "Sync authentication with kyutai-stt-web-client",
       "branch": "feat/issue-67-sync-auth-webclient",
       "tasks": [
-        {"description": "Add ?token= query parameter support for JWT authentication in WebSocket handlers", "done": false},
+        {"description": "Add ?token= query parameter support for JWT authentication in WebSocket handlers", "done": true, "commit_sha": "875c1250a756dbeb1f91f9ef31ea9af120c71f44", "completed_at": "2025-12-09T14:10:00Z"},
         {"description": "Add role and status fields to UserData struct in auth.rs", "done": false},
         {"description": "Create AuthErrorCode::PendingApproval and AuthErrorCode::AccountRejected error variants", "done": false},
         {"description": "Implement check_approval_status() helper that validates status == 'approved'", "done": false},
@@ -15,8 +15,8 @@
         {"description": "Add unit tests for new authentication flows", "done": false},
         {"description": "Update docs/MOSHI_SERVER_SETUP.md with new auth behavior", "done": false}
       ],
-      "current_task_index": 0,
-      "status": "pending",
+      "current_task_index": 1,
+      "status": "in_progress",
       "github_issue": {
         "number": 67,
         "title": "Sync authentication with kyutai-stt-web-client",
@@ -24,7 +24,7 @@
         "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/67"
       },
       "pr_number": null,
-      "started_at": null
+      "started_at": "2025-12-09T14:05:00Z"
     }
   ],
   "current_issue_index": 0,
@@ -34,5 +34,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-09T14:05:00Z"
+  "last_updated": "2025-12-09T14:10:00Z"
 }

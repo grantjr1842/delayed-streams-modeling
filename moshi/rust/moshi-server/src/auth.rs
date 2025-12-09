@@ -637,4 +637,95 @@ mod tests {
         assert_eq!(mask_key("short"), "*hidden*");
         assert_eq!(mask_key("abcdefghijklmnop"), "abcdef…mnop");
     }
+
+    // Helper to create test claims with a specific status
+    fn make_test_claims(status: Option<&str>) -> BetterAuthClaims {
+        BetterAuthClaims {
+            session: SessionData {
+                id: "session-123".to_string(),
+                user_id: "user-456".to_string(),
+                created_at: "2025-01-01T00:00:00Z".to_string(),
+                updated_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+                token: None,
+                ip_address: None,
+                user_agent: None,
+            },
+            user: UserData {
+                id: "user-456".to_string(),
+                name: Some("Test User".to_string()),
+                email: Some("test@example.com".to_string()),
+                email_verified: Some(true),
+                image: None,
+                role: Some("user".to_string()),
+                status: status.map(String::from),
+            },
+            iat: Some(1704067200),
+            exp: Some(4102444800),
+        }
+    }
+
+    #[test]
+    fn test_check_approval_status_approved() {
+        let claims = make_test_claims(Some("approved"));
+        assert!(check_approval_status(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_check_approval_status_none_backwards_compat() {
+        // When status is None (old JWTs without status field), should be allowed
+        let claims = make_test_claims(None);
+        assert!(check_approval_status(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_check_approval_status_pending() {
+        let claims = make_test_claims(Some("pending"));
+        let err = check_approval_status(&claims).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::PendingApproval));
+        assert_eq!(err.error, "forbidden");
+        assert!(err.message.contains("pending"));
+    }
+
+    #[test]
+    fn test_check_approval_status_rejected() {
+        let claims = make_test_claims(Some("rejected"));
+        let err = check_approval_status(&claims).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+        assert_eq!(err.error, "forbidden");
+        assert!(err.message.contains("rejected"));
+    }
+
+    #[test]
+    fn test_check_approval_status_unknown_treated_as_rejected() {
+        let claims = make_test_claims(Some("unknown_status"));
+        let err = check_approval_status(&claims).unwrap_err();
+        // Unknown statuses are treated as rejected for security
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+    }
+
+    #[test]
+    fn test_pending_approval_error_with_email() {
+        let err = AuthError::pending_approval(Some("user@example.com"));
+        assert!(matches!(err.code, AuthErrorCode::PendingApproval));
+        assert!(err.message.contains("user@example.com"));
+        assert_eq!(err.error, "forbidden");
+    }
+
+    #[test]
+    fn test_account_rejected_error_with_email() {
+        let err = AuthError::account_rejected(Some("user@example.com"));
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+        assert!(err.message.contains("user@example.com"));
+        assert_eq!(err.error, "forbidden");
+    }
+
+    #[test]
+    fn test_error_type_new_variants() {
+        let pending = AuthError::pending_approval(None);
+        assert_eq!(pending.error_type(), "pending_approval");
+
+        let rejected = AuthError::account_rejected(None);
+        assert_eq!(rejected.error_type(), "account_rejected");
+    }
 }

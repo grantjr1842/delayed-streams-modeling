@@ -10,8 +10,8 @@ use axum::{
 };
 use candle::Device;
 use std::str::FromStr;
-use std::time::Instant;
 use std::sync::Arc;
+use std::time::Instant;
 
 mod asr;
 mod auth;
@@ -368,7 +368,7 @@ fn lm_router(s: Arc<lm::Lm>, path: &str) -> axum::Router<()> {
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         if let Some(ip) = &addr {
-             tracing::Span::current().record("client_ip", ip);
+            tracing::Span::current().record("client_ip", ip);
         }
         tracing::info!("handling lm-streaming query");
         let state = state.0.clone();
@@ -411,7 +411,13 @@ impl Module {
             Err(err) => {
                 warmup_metrics::DURATION.observe(elapsed);
                 warmup_metrics::FAILURE.inc();
-                tracing::error!(module, path, duration_ms = (elapsed * 1000.0), ?err, "warmup failed");
+                tracing::error!(
+                    module,
+                    path,
+                    duration_ms = (elapsed * 1000.0),
+                    ?err,
+                    "warmup failed"
+                );
             }
         }
 
@@ -553,42 +559,35 @@ struct LogConfig {
     json: bool,
 }
 
-fn tracing_init(
-    config: LogConfig,
-) -> Result<tracing_appender::non_blocking::WorkerGuard> {
-    use tracing_rolling_file::{RollingConditionBase, RollingFileAppenderBase};
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::fmt::time::ChronoLocal;
+fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use std::io::IsTerminal;
+    use tracing_rolling_file::{RollingConditionBase, RollingFileAppenderBase};
+    use tracing_subscriber::fmt::time::ChronoLocal;
+    use tracing_subscriber::prelude::*;
 
     let build_info = utils::BuildInfo::new();
-    
+
     // Create log directory if it doesn't exist
     std::fs::create_dir_all(&config.log_dir)?;
-    
+
     // Build rolling file appender with size-based rotation and max file count
     // Uses Debian-style naming: log.instance, log.instance.1, log.instance.2, etc.
-    let log_path = std::path::Path::new(&config.log_dir).join(format!("log.{}", config.instance_name));
-    
+    let log_path =
+        std::path::Path::new(&config.log_dir).join(format!("log.{}", config.instance_name));
+
     // Create rolling condition: rotate daily OR when file exceeds max_size_mb
-    let condition = RollingConditionBase::new()
-        .daily()
-        .max_size(config.max_size_mb * 1024 * 1024);  // Convert MB to bytes
-    
-    let file_appender = RollingFileAppenderBase::new(
-        log_path,
-        condition,
-        config.max_files,
-    )?;
-    
+    let condition = RollingConditionBase::new().daily().max_size(config.max_size_mb * 1024 * 1024); // Convert MB to bytes
+
+    let file_appender = RollingFileAppenderBase::new(log_path, condition, config.max_files)?;
+
     // Get non-blocking writer for async file writes
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
-    
+
     let filter = tracing_subscriber::filter::LevelFilter::from_str(&config.log_level)?;
-    
+
     // Custom timestamp format: "2025-12-02 01:36:42.113" (more readable than ISO 8601)
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string());
-    
+
     // File layer: NO ANSI colors, clean timestamps (or JSON)
     let file_layer = if config.json {
         let json_layer = tracing_subscriber::fmt::layer()
@@ -599,7 +598,7 @@ fn tracing_init(
             .with_target(true)
             .with_writer(non_blocking_file)
             .with_filter(filter.clone());
-        
+
         json_layer.boxed()
     } else {
         let text_layer = tracing_subscriber::fmt::layer()
@@ -609,23 +608,21 @@ fn tracing_init(
                     .with_file(true)
                     .with_line_number(true)
                     .with_target(true)
-                    .with_ansi(false)  // No ANSI escape codes in log files
+                    .with_ansi(false), // No ANSI escape codes in log files
             )
             .with_writer(non_blocking_file)
             .with_filter(filter.clone());
-        
+
         text_layer.boxed()
     };
-    
+
     if config.silent {
         // File-only logging
-        tracing_subscriber::registry()
-            .with(file_layer)
-            .init();
+        tracing_subscriber::registry().with(file_layer).init();
     } else {
         // Console layer: WITH ANSI colors for terminal (or JSON)
         let console_layer = if config.json {
-             let json_layer = tracing_subscriber::fmt::layer()
+            let json_layer = tracing_subscriber::fmt::layer()
                 .json()
                 .with_timer(timer)
                 .with_file(true)
@@ -633,7 +630,7 @@ fn tracing_init(
                 .with_target(true)
                 .with_writer(std::io::stdout)
                 .with_filter(filter);
-            
+
             json_layer.boxed()
         } else {
             let use_ansi = std::io::stdout().is_terminal();
@@ -644,20 +641,17 @@ fn tracing_init(
                         .with_file(true)
                         .with_line_number(true)
                         .with_target(true)
-                        .with_ansi(use_ansi)
+                        .with_ansi(use_ansi),
                 )
                 .with_writer(std::io::stdout)
                 .with_filter(filter);
-            
+
             text_layer.boxed()
         };
-        
-        tracing_subscriber::registry()
-            .with(file_layer)
-            .with(console_layer)
-            .init();
+
+        tracing_subscriber::registry().with(file_layer).with(console_layer).init();
     }
-    
+
     tracing::info!(?build_info);
     tracing::info!(
         log_dir = %config.log_dir,
@@ -666,7 +660,7 @@ fn tracing_init(
         json = config.json,
         "Logging initialized with rotation"
     );
-    
+
     Ok(guard)
 }
 
@@ -752,7 +746,7 @@ async fn main_() -> Result<()> {
                 json: args.json,
             };
             let _guard = tracing_init(log_config)?;
-            
+
             // Create a span for the startup sequence
             let startup_span = tracing::info_span!("startup");
             let _enter = startup_span.enter();
@@ -767,34 +761,38 @@ async fn main_() -> Result<()> {
                 // Extract model info from the first LM-bearing module for logging
                 let model_info = config.modules.values().find_map(|m| match m {
                     ModuleConfig::Lm { config: c, .. } => Some(utils::ModelInfo::from_lm_config(c)),
-                    ModuleConfig::Asr { config: c, .. } => Some(utils::ModelInfo::from_asr_config(c)),
-                    ModuleConfig::BatchedAsr { config: c, .. } => Some(utils::ModelInfo::from_asr_config(c)),
-                    ModuleConfig::Tts { config: c, .. } => Some(utils::ModelInfo::from_tts_config(c)),
+                    ModuleConfig::Asr { config: c, .. } => {
+                        Some(utils::ModelInfo::from_asr_config(c))
+                    }
+                    ModuleConfig::BatchedAsr { config: c, .. } => {
+                        Some(utils::ModelInfo::from_asr_config(c))
+                    }
+                    ModuleConfig::Tts { config: c, .. } => {
+                        Some(utils::ModelInfo::from_tts_config(c))
+                    }
                     _ => None,
                 });
-                
+
                 // Log combined GPU and model summary
                 gpu_info.log_combined_summary(model_info.as_ref());
 
                 // Get recommended dtype based on GPU compute capability
                 let auto_dtype = gpu_info.recommended_dtype();
-                
+
                 // Read configuration from environment or use defaults
                 let model_params_billions: f64 = std::env::var("MOSHI_MODEL_PARAMS_BILLIONS")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(utils::DEFAULT_MODEL_PARAMS_BILLIONS);
-                
+
                 let per_batch_item_mb: u64 = std::env::var("MOSHI_PER_BATCH_ITEM_MB")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(utils::DEFAULT_PER_BATCH_ITEM_MB);
-                
+
                 // Calculate batch size with detailed breakdown
-                let batch_calc = gpu_info.calculate_batch_size(
-                    model_params_billions,
-                    per_batch_item_mb,
-                );
+                let batch_calc =
+                    gpu_info.calculate_batch_size(model_params_billions, per_batch_item_mb);
                 batch_calc.log_breakdown();
 
                 if batch_calc.available_for_batching_mb == 0 {
@@ -804,7 +802,7 @@ async fn main_() -> Result<()> {
                          Try using a lower precision model, reducing VRAM_RESERVED_MB, or switching to the Low-RAM config."
                     );
                 }
-                
+
                 let max_safe_batch_size = batch_calc.recommended_batch_size;
 
                 for (name, module_cfg) in config.modules.iter_mut() {
@@ -819,7 +817,7 @@ async fn main_() -> Result<()> {
                                 );
                                 asr_config.dtype_override = Some(auto_dtype.to_string());
                             }
-                            
+
                             // Adjust batch size if too large
                             if *batch_size > max_safe_batch_size {
                                 tracing::warn!(
@@ -879,7 +877,7 @@ async fn main_() -> Result<()> {
 
             // Start background metrics updater
             spawn_metrics_updater();
-            
+
             // End startup span before starting the server
             drop(_enter);
 
@@ -912,11 +910,8 @@ async fn main_() -> Result<()> {
             ));
             tracing::info!("listening on {}", sock_addr);
             let listener = tokio::net::TcpListener::bind(sock_addr).await?;
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await?
+            axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                .await?
         }
     }
     Ok(())
@@ -957,6 +952,8 @@ struct TtsStreamingQuery {
     max_seq_len: Option<usize>,
     cfg_alpha: Option<f64>,
     auth_id: Option<String>,
+    /// JWT token for authentication (alternative to Authorization header)
+    token: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
@@ -1064,7 +1061,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         req: axum::Json<TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts query {req:?}");
-        match auth::check_with_user(&headers, None, &state.0 .1.config.authorized_ids) {
+        match auth::check_with_user(&headers, None, None, &state.0 .1.config.authorized_ids) {
             Ok(claims) => {
                 if let Some(c) = claims {
                     tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
@@ -1102,10 +1099,11 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         tracing::info!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         if let Some(ip) = &addr {
-             tracing::Span::current().record("client_ip", ip);
+            tracing::Span::current().record("client_ip", ip);
         }
-        let auth_result = auth::check_with_user(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check_with_user(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
         let upg =
@@ -1207,17 +1205,13 @@ static SERVER_START_TIMESTAMP: std::sync::OnceLock<String> = std::sync::OnceLock
 /// Initialize server start time (call once at startup)
 fn init_server_start_time() {
     SERVER_START_TIME.get_or_init(std::time::Instant::now);
-    SERVER_START_TIMESTAMP.get_or_init(|| {
-        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-    });
+    SERVER_START_TIMESTAMP
+        .get_or_init(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
 }
 
 /// Get server uptime in seconds
 fn get_uptime_seconds() -> u64 {
-    SERVER_START_TIME
-        .get()
-        .map(|start| start.elapsed().as_secs())
-        .unwrap_or(0)
+    SERVER_START_TIME.get().map(|start| start.elapsed().as_secs()).unwrap_or(0)
 }
 
 fn spawn_metrics_updater() {
@@ -1225,7 +1219,7 @@ fn spawn_metrics_updater() {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             interval.tick().await;
-            
+
             if let Ok(info) = utils::get_gpu_info() {
                 use crate::metrics::system;
                 system::FREE_VRAM.set(info.free_vram as f64);
@@ -1304,17 +1298,9 @@ async fn server_status(
     let response = StatusResponse {
         status,
         uptime_seconds: get_uptime_seconds(),
-        started_at: SERVER_START_TIMESTAMP
-            .get()
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string()),
+        started_at: SERVER_START_TIMESTAMP.get().cloned().unwrap_or_else(|| "unknown".to_string()),
         build: utils::BuildInfo::new(),
-        capacity: CapacityInfo {
-            total_slots,
-            used_slots,
-            available_slots,
-            modules,
-        },
+        capacity: CapacityInfo { total_slots, used_slots, available_slots, modules },
         auth: AuthInfo {
             api_key_configured: std::env::var("MOSHI_API_KEY").is_ok(),
             better_auth_enabled: std::env::var("BETTER_AUTH_SECRET").is_ok(),
@@ -1332,10 +1318,7 @@ async fn health_check() -> impl IntoResponse {
         uptime_seconds: u64,
     }
 
-    axum::Json(HealthResponse {
-        status: "ok",
-        uptime_seconds: get_uptime_seconds(),
-    })
+    axum::Json(HealthResponse { status: "ok", uptime_seconds: get_uptime_seconds() })
 }
 
 async fn modules_info(
@@ -1390,11 +1373,15 @@ async fn modules_info(
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct AsrStreamingQuery {
     auth_id: Option<String>,
+    /// JWT token for authentication (alternative to Authorization header)
+    token: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct PyStreamingQuery {
     auth_id: Option<String>,
+    /// JWT token for authentication (alternative to Authorization header)
+    token: Option<String>,
     #[serde(default = "default_format")]
     format: StreamingOutput,
     #[serde(default)]
@@ -1404,6 +1391,8 @@ struct PyStreamingQuery {
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct PyAsrStreamingQuery {
     auth_id: Option<String>,
+    /// JWT token for authentication (alternative to Authorization header)
+    token: Option<String>,
 }
 
 fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()> {
@@ -1431,26 +1420,27 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         if let Some(ip) = &addr {
-             tracing::Span::current().record("client_ip", ip);
+            tracing::Span::current().record("client_ip", ip);
         }
         tracing::info!("handling asr-streaming query");
-        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
-        let upg =
-            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                    let _ = crate::utils::close_with_reason(
-                        &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
-                    return;
-                }
-                asr_websocket(socket, asr, asr_query, addr).await
-            });
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                )
+                .await;
+                return;
+            }
+            asr_websocket(socket, asr, asr_query, addr).await
+        });
         Ok(upg)
     }
     axum::Router::new()
@@ -1486,7 +1476,7 @@ fn batched_asr_router(
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!(len = req.len(), "handling asr post query");
-        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
             return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
@@ -1507,26 +1497,27 @@ fn batched_asr_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         if let Some(ip) = &addr {
-             tracing::Span::current().record("client_ip", ip);
+            tracing::Span::current().record("client_ip", ip);
         }
         tracing::info!("handling batched asr-streaming query");
-        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
-        let upg =
-            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                    let _ = crate::utils::close_with_reason(
-                        &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
-                    return;
-                }
-                asr_websocket(socket, asr, asr_query, addr).await
-            });
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                )
+                .await;
+                return;
+            }
+            asr_websocket(socket, asr, asr_query, addr).await
+        });
         Ok(upg)
     }
     axum::Router::new()
@@ -1578,7 +1569,7 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
         req: axum::Json<py_module::TtsQuery>,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py streaming post query {req:?}");
-        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
             return Ok(err.into_response());
         }
         let wav_stream = state.0 .0.handle_query(&req).await?;
@@ -1600,8 +1591,9 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
     ) -> utils::AxumResult<Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
-        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
         let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
@@ -1611,7 +1603,8 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
                     &mut socket,
                     crate::protocol::CloseCode::AuthenticationFailed,
                     Some("Authentication failed"),
-                ).await;
+                )
+                .await;
                 return;
             }
             py_websocket(socket, py, py_query, addr).await
@@ -1645,7 +1638,7 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
         req: axum::body::Bytes,
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling py asr streaming post query {req:?}");
-        if let Err(err) = auth::check(&headers, None, &state.0 .1.config.authorized_ids) {
+        if let Err(err) = auth::check(&headers, None, None, &state.0 .1.config.authorized_ids) {
             return Ok(err.into_response());
         }
         let transcript = state.0 .0.handle_query(req).await?;
@@ -1666,24 +1659,24 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
-        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.1.config.authorized_ids);
+
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
-        let upg = ws
-            .write_buffer_size(0)
-            .on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                    let _ = crate::utils::close_with_reason(
-                        &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
-                    return;
-                }
-                py_websocket(socket, py_asr, py_asr_query, addr).await
-            });
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                )
+                .await;
+                return;
+            }
+            py_websocket(socket, py_asr, py_asr_query, addr).await
+        });
         Ok(upg)
     }
     axum::Router::new()
@@ -1695,6 +1688,8 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct MimiStreamingQuery {
     auth_id: Option<String>,
+    /// JWT token for authentication (alternative to Authorization header)
+    token: Option<String>,
     room_id: Option<String>,
 }
 
@@ -1726,30 +1721,29 @@ fn mimi_router(
         // It's tricky to set the headers of a websocket in javascript so we pass the token via the
         // query too.
         let auth_result = if state.0 .0.auth_recv() {
-            auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids)
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.0 .1.config.authorized_ids)
         } else {
             Ok(())
         };
-        
+
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),
             None => req.room_id.clone(),
         };
         let state = state.0 .0.clone();
-        let upg = ws
-            .write_buffer_size(0)
-            .on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                    let _ = crate::utils::close_with_reason(
-                        &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
-                    return;
-                }
-                mimi_recv_websocket(socket, state, room_id, addr).await
-            });
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                )
+                .await;
+                return;
+            }
+            mimi_recv_websocket(socket, state, room_id, addr).await
+        });
         Ok(upg)
     }
 
@@ -1772,8 +1766,9 @@ fn mimi_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
-        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids);
-        
+        let auth_result =
+            auth::check(&headers, req.auth_id.as_deref(), req.token.as_deref(), &state.0 .1.config.authorized_ids);
+
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),
             None => req.room_id.clone(),
@@ -1782,37 +1777,37 @@ fn mimi_router(
             None => Err(anyhow::format_err!("no room_id")),
             Some(room_id) => Ok(room_id),
         };
-        
+
         let state = state.0 .0;
-        let upg = ws
-            .write_buffer_size(0)
-            .on_upgrade(move |mut socket| async move {
-                if let Err(err) = auth_result {
-                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                )
+                .await;
+                return;
+            }
+
+            let room_id = match room_id {
+                Ok(id) => id,
+                Err(err) => {
+                    tracing::error!(?err, "no room_id, closing socket");
+                    // We could send a CloseCode::InvalidMessage here
                     let _ = crate::utils::close_with_reason(
                         &mut socket,
-                        crate::protocol::CloseCode::AuthenticationFailed,
-                        Some("Authentication failed"),
-                    ).await;
+                        crate::protocol::CloseCode::InvalidMessage,
+                        Some("Missing room_id"),
+                    )
+                    .await;
                     return;
                 }
-                
-                let room_id = match room_id {
-                    Ok(id) => id,
-                    Err(err) => {
-                         tracing::error!(?err, "no room_id, closing socket");
-                         // We could send a CloseCode::InvalidMessage here
-                         let _ = crate::utils::close_with_reason(
-                             &mut socket,
-                             crate::protocol::CloseCode::InvalidMessage,
-                             Some("Missing room_id"),
-                         ).await;
-                         return;
-                    }
-                };
-                
-                mimi_send_websocket(socket, state, room_id, addr).await
-            });
+            };
+
+            mimi_send_websocket(socket, state, room_id, addr).await
+        });
         Ok(upg)
     }
     axum::Router::new()

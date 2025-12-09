@@ -125,11 +125,9 @@ pub mod warmup {
             "Number of successful warmup executions."
         ))
         .unwrap();
-        pub static ref FAILURE: Counter = register_counter!(opts!(
-            "warmup_failure_total",
-            "Number of failed warmup executions."
-        ))
-        .unwrap();
+        pub static ref FAILURE: Counter =
+            register_counter!(opts!("warmup_failure_total", "Number of failed warmup executions."))
+                .unwrap();
         pub static ref SKIPPED: Counter = register_counter!(opts!(
             "warmup_skipped_total",
             "Number of warmup executions skipped (disabled)."
@@ -141,32 +139,21 @@ pub mod warmup {
 pub mod system {
     use super::*;
     lazy_static! {
-        pub static ref FREE_VRAM: Gauge = register_gauge!(opts!(
-            "system_free_vram_bytes",
-            "Free VRAM in bytes."
-        ))
-        .unwrap();
-        pub static ref USED_VRAM: Gauge = register_gauge!(opts!(
-            "system_used_vram_bytes",
-            "Used VRAM in bytes."
-        ))
-        .unwrap();
-        pub static ref TOTAL_VRAM: Gauge = register_gauge!(opts!(
-            "system_total_vram_bytes",
-            "Total VRAM in bytes."
-        ))
-        .unwrap();
-        pub static ref GPU_UTILIZATION: Gauge = register_gauge!(opts!(
-            "system_gpu_utilization_percent",
-            "GPU utilization percentage."
-        ))
-        .unwrap();
+        pub static ref FREE_VRAM: Gauge =
+            register_gauge!(opts!("system_free_vram_bytes", "Free VRAM in bytes.")).unwrap();
+        pub static ref USED_VRAM: Gauge =
+            register_gauge!(opts!("system_used_vram_bytes", "Used VRAM in bytes.")).unwrap();
+        pub static ref TOTAL_VRAM: Gauge =
+            register_gauge!(opts!("system_total_vram_bytes", "Total VRAM in bytes.")).unwrap();
+        pub static ref GPU_UTILIZATION: Gauge =
+            register_gauge!(opts!("system_gpu_utilization_percent", "GPU utilization percentage."))
+                .unwrap();
     }
 }
 
 pub mod errors {
-    use prometheus::{register_int_counter_vec, IntCounterVec};
     use lazy_static::lazy_static;
+    use prometheus::{register_int_counter_vec, IntCounterVec};
 
     lazy_static! {
         /// WebSocket close events by close code.
@@ -201,16 +188,12 @@ pub mod errors {
     #[allow(dead_code)]
     pub fn record_ws_close(code: u16, reason: &str) {
         let code_str = code.to_string();
-        WS_CLOSE_TOTAL
-            .with_label_values(&[code_str.as_str(), reason])
-            .inc();
+        WS_CLOSE_TOTAL.with_label_values(&[code_str.as_str(), reason]).inc();
     }
 
     /// Record a connection error.
     pub fn record_connection_error(error_type: &str, module: &str) {
-        CONNECTION_ERROR_TOTAL
-            .with_label_values(&[error_type, module])
-            .inc();
+        CONNECTION_ERROR_TOTAL.with_label_values(&[error_type, module]).inc();
     }
 
     /// Record an authentication error.

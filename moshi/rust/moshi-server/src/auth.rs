@@ -216,10 +216,7 @@ impl AuthConfig {
         // Load JWT secret for Better Auth
         let jwt_secret = std::env::var("BETTER_AUTH_SECRET").ok();
 
-        Self {
-            authorized_ids,
-            jwt_secret,
-        }
+        Self { authorized_ids, jwt_secret }
     }
 
     /// Log authentication configuration (call after tracing is initialized)
@@ -248,9 +245,7 @@ pub fn mask_key(key: &str) -> String {
 
 /// Get the JWT secret from environment (cached)
 fn get_jwt_secret() -> Option<&'static str> {
-    JWT_SECRET
-        .get_or_init(|| std::env::var("BETTER_AUTH_SECRET").ok())
-        .as_deref()
+    JWT_SECRET.get_or_init(|| std::env::var("BETTER_AUTH_SECRET").ok()).as_deref()
 }
 
 /// Extract Bearer token from Authorization header
@@ -263,17 +258,12 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 /// Extract session token from cookie
 fn extract_session_cookie(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let cookie = cookie.trim();
-                cookie
-                    .strip_prefix(SESSION_COOKIE)
-                    .and_then(|rest| rest.strip_prefix('='))
-            })
+    headers.get("cookie").and_then(|v| v.to_str().ok()).and_then(|cookies| {
+        cookies.split(';').find_map(|cookie| {
+            let cookie = cookie.trim();
+            cookie.strip_prefix(SESSION_COOKIE).and_then(|rest| rest.strip_prefix('='))
         })
+    })
 }
 
 /// Validate a Better Auth JWT token
@@ -335,19 +325,18 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, AuthError> {
 /// Check authentication using multiple methods:
 /// 1. Legacy API key (kyutai-api-key header or query param)
 /// 2. Bearer token (Authorization header with JWT)
-/// 3. Session cookie (better-auth.session_token)
+/// 3. JWT token via query parameter (?token=...)
+/// 4. Session cookie (better-auth.session_token)
 ///
 /// Returns Ok(()) if any method succeeds, Err(AuthError) with structured JSON otherwise.
 pub fn check(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
+    query_token: Option<&str>,
     authorized_ids: &HashSet<String>,
 ) -> Result<(), AuthError> {
     // Method 1: Legacy API key authentication
-    let api_key = headers
-        .get(ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .or(query_auth_id);
+    let api_key = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).or(query_auth_id);
 
     if let Some(key) = api_key {
         if authorized_ids.contains(key) {
@@ -372,7 +361,21 @@ pub fn check(
         }
     }
 
-    // Method 3: Session cookie
+    // Method 3: JWT token via query parameter (?token=...)
+    if let Some(token) = query_token {
+        match validate_jwt(token) {
+            Ok(_) => {
+                tracing::debug!("Authenticated via query token parameter");
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                return Err(e);
+            }
+        }
+    }
+
+    // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
             Ok(_) => return Ok(()),
@@ -392,13 +395,11 @@ pub fn check(
 pub fn check_with_user(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
+    query_token: Option<&str>,
     authorized_ids: &HashSet<String>,
 ) -> Result<Option<BetterAuthClaims>, AuthError> {
     // Method 1: Legacy API key authentication
-    let api_key = headers
-        .get(ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .or(query_auth_id);
+    let api_key = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).or(query_auth_id);
 
     if let Some(key) = api_key {
         if authorized_ids.contains(key) {
@@ -423,7 +424,21 @@ pub fn check_with_user(
         }
     }
 
-    // Method 3: Session cookie
+    // Method 3: JWT token via query parameter (?token=...)
+    if let Some(token) = query_token {
+        match validate_jwt(token) {
+            Ok(claims) => {
+                tracing::debug!("Authenticated via query token parameter");
+                return Ok(Some(claims));
+            }
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                return Err(e);
+            }
+        }
+    }
+
+    // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
             Ok(claims) => return Ok(Some(claims)),
@@ -448,9 +463,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION_HEADER,
-            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
-                .parse()
-                .unwrap(),
+            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".parse().unwrap(),
         );
         assert_eq!(
             extract_bearer_token(&headers),
@@ -463,9 +476,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "cookie",
-            "other=value; better-auth.session_token=abc123; another=test"
-                .parse()
-                .unwrap(),
+            "other=value; better-auth.session_token=abc123; another=test".parse().unwrap(),
         );
         assert_eq!(extract_session_cookie(&headers), Some("abc123"));
     }
@@ -478,7 +489,7 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("test-key".to_string());
 
-        assert!(check(&headers, None, &authorized).is_ok());
+        assert!(check(&headers, None, None, &authorized).is_ok());
     }
 
     #[test]
@@ -487,8 +498,8 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("query-key".to_string());
 
-        assert!(check(&headers, Some("query-key"), &authorized).is_ok());
-        assert!(check(&headers, Some("wrong-key"), &authorized).is_err());
+        assert!(check(&headers, Some("query-key"), None, &authorized).is_ok());
+        assert!(check(&headers, Some("wrong-key"), None, &authorized).is_err());
     }
 
     #[test]
@@ -499,7 +510,7 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("correct-key".to_string());
 
-        let err = check(&headers, None, &authorized).unwrap_err();
+        let err = check(&headers, None, None, &authorized).unwrap_err();
         assert!(matches!(err.code, AuthErrorCode::InvalidKey));
     }
 
@@ -508,7 +519,7 @@ mod tests {
         let headers = HeaderMap::new();
         let authorized = HashSet::new();
 
-        let err = check(&headers, None, &authorized).unwrap_err();
+        let err = check(&headers, None, None, &authorized).unwrap_err();
         assert!(matches!(err.code, AuthErrorCode::MissingCredentials));
     }
 

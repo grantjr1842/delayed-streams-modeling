@@ -1,6 +1,10 @@
 {
-  "phase": "merging",
-  "epic_issue": 54,
+  "phase": "implementing",
+  "epic_issue": {
+    "number": 54,
+    "title": "System Reliability & Observability Overhaul",
+    "description": "Epic tracking improvements to system logging and resource management logic."
+  },
   "repository": {
     "owner": "grantjr1842",
     "name": "delayed-streams-modeling",
@@ -9,71 +13,28 @@
   },
   "issues": [
     {
-      "number": 59,
-      "title": "Enhance Logging Visuals and Structure",
-      "branch": "feat/issue-59-visual-logging",
+      "number": 63,
+      "title": "Fix WebSocket Instability and ABNORMAL_CLOSURE (1006)",
+      "branch": "fix/issue-63-websocket-instability",
       "tasks": [
-        {"description": "Configure tracing-subscriber for colored, structured output on stdout.", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
-        {"description": "Implement spans for logical sections (e.g. startup, request handling).", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
-        {"description": "Ensure ANSI codes are correctly handled (enabled for tty, disabled for file/no-tty).", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
-        {"description": "Review and improve existing log messages for clarity and consistency.", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"}
+        {"description": "Check moshi-server logs for disconnects or panics", "done": true, "completed_at": "2025-12-08T22:00:00Z"},
+        {"description": "Check Caddy logs for proxy errors", "done": true, "completed_at": "2025-12-08T22:05:00Z"},
+        {"description": "Verify Keep-Alive/Ping-Pong configuration", "done": true, "completed_at": "2025-12-08T22:15:00Z"},
+        {"description": "Implement fix for connection stability", "done": false}
       ],
-      "current_task_index": 4,
-      "status": "complete",
-      "completed_at": "2025-12-09T02:22:00Z",
+      "current_task_index": 3,
+      "status": "in_progress",
       "github_issue": {
-        "number": 59,
-        "title": "Enhance Logging Visuals and Structure",
-        "body": "Part of #54\n\n## Tasks\n- [ ] Configure tracing-subscriber for colored, structured output on stdout.\n- [ ] Implement spans for logical sections (e.g. startup, request handling).\n- [ ] Ensure ANSI codes are correctly handled (enabled for tty, disabled for file/no-tty).\n- [ ] Review and improve existing log messages for clarity and consistency."
+        "number": 63,
+        "title": "Fix WebSocket Instability and ABNORMAL_CLOSURE (1006)",
+        "body": "Part of #54.\n\nThe client reports intermittent `ABNORMAL_CLOSURE` (1006) errors with no specific reason. Connection is restored quickly, but this impacts stability.\n\nLogs show:\n`21:34:54.618 installHook.js:1 [STT] [WARN] CONNECTION_CLOSED: Connection closed unexpectedly | {\"component\":\"STTWebSocketClient\",\"code\":1006,\"reason\":\"(no reason)\",\"wasClean\":false,\"recoverable\":true,\"errorCode\":\"ABNORMAL_CLOSURE\"}`",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/63"
       },
-      "pr_number": 60,
-      "started_at": "2025-12-09T02:05:00Z"
-    },
-    {
-      "number": 56,
-      "title": "Verify and Tune Auto Batch Size Calculations",
-      "branch": "feat/issue-56-vram-tuning",
-      "tasks": [
-        {"description": "Review DEFAULT_VRAM_RESERVED_MB and other constants.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
-        {"description": "Validate saturating_sub usage prevents underflow but might mask configuration errors.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
-        {"description": "Check if mimi_mb estimate is accurate.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
-        {"description": "Add memory usage tracking/metrics during runtime to validate static estimates.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
-        {"description": "Consider making per_batch_item_mb dynamic based on model/dtype.", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"},
-        {"description": "Create detailed documentation for VRAM and batch size calculations (math and constants).", "done": true, "commit_sha": "d0e1234", "completed_at": "2025-12-09T02:40:00Z"}
-      ],
-      "current_task_index": 6,
-      "status": "complete",
-      "completed_at": "2025-12-09T02:40:00Z",
-      "github_issue": {
-        "number": 56,
-        "title": "Verify and Tune Auto Batch Size Calculations",
-        "body": "Part of #54\n\n## Tasks\n- [ ] Review DEFAULT_VRAM_RESERVED_MB and other constants.\n- [ ] Validate saturating_sub usage prevents underflow but might mask configuration errors.\n- [ ] Check if mimi_mb estimate is accurate.\n- [ ] Add memory usage tracking/metrics during runtime to validate static estimates.\n- [ ] Consider making per_batch_item_mb dynamic based on model/dtype.\n- [ ] Create detailed documentation for VRAM and batch size calculations (math and constants)."
-      },
-      "pr_number": 61,
-      "started_at": "2025-12-09T02:25:00Z"
-    },
-    {
-      "number": 58,
-      "title": "Performance Analysis and Optimization",
-      "branch": "feat/issue-58-performance",
-      "tasks": [
-        {"description": "Profile startup and inference loop to identify bottlenecks.", "done": true, "commit_sha": "e1f2345", "completed_at": "2025-12-09T02:55:00Z"},
-        {"description": "Investigate optimization flags (LTO, codegen-units).", "done": true, "commit_sha": "e1f2345", "completed_at": "2025-12-09T02:55:00Z"},
-        {"description": "Analyze locking granularity (e.g. Arc<Mutex> usage).", "done": true, "commit_sha": "e1f2345", "completed_at": "2025-12-09T02:55:00Z"},
-        {"description": "Check for unnecessary data copying or cloning.", "done": true, "commit_sha": "e1f2345", "completed_at": "2025-12-09T02:55:00Z"}
-      ],
-      "current_task_index": 4,
-      "status": "complete",
-      "completed_at": "2025-12-09T02:55:00Z",
-      "github_issue": {
-        "number": 58,
-        "title": "Performance Analysis and Optimization",
-        "body": "Part of #54\n\n## Tasks\n- [ ] Profile startup and inference loop to identify bottlenecks.\n- [ ] Investigate optimization flags (LTO, codegen-units).\n- [ ] Analyze locking granularity (e.g. Arc<Mutex> usage).\n- [ ] Check for unnecessary data copying or cloning."
-      },
-      "pr_number": 62,
-      "started_at": "2025-12-09T02:45:00Z"
+      "pr_number": null,
+      "started_at": "2025-12-08T21:40:00Z"
     }
   ],
-  "current_issue_index": 3,
-  "last_updated": "2025-12-09T02:55:00Z"
+  "current_issue_index": 0,
+  "last_updated": "2025-12-08T22:15:00Z"
 }

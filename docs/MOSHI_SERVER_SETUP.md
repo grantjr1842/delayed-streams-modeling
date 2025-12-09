@@ -149,8 +149,62 @@ moshi-server worker --config config.toml \
   --log info \                    # Log level (trace, debug, info, warn, error)
   --log-max-size-mb 100 \         # Max size per log file in MB
   --log-max-files 10 \            # Max number of rotated log files to keep
+  --log-style pretty \            # Console style: compact, pretty, verbose
+  --json \                        # Use JSON structured logging
   --silent                        # Disable console output (file only)
 ```
+
+### Log Styles
+
+The server supports three console log styles via `--log-style`:
+
+| Style | Description | Use Case |
+|-------|-------------|----------|
+| `compact` | Icon only, minimal output | Production, high-throughput |
+| `pretty` | Icons + level names + colors (default) | Development, debugging |
+| `verbose` | Full details with file/line numbers | Deep debugging |
+
+**Example outputs:**
+
+**Compact:**
+```
+2025-12-09 12:00:00.123 ✓ Logging initialized with rotation
+```
+
+**Pretty:**
+```
+2025-12-09 12:00:00.123 ✓ INFO moshi_server::main Logging initialized with rotation
+```
+
+**Verbose:**
+```
+2025-12-09 12:00:00.123 ✓ INFO moshi_server::main startup: main.rs:750 Logging initialized with rotation
+```
+
+### Level Icons
+
+The console output uses level-based icons for quick visual identification:
+
+| Level | Icon | Color |
+|-------|------|-------|
+| TRACE | `·` | Dimmed |
+| DEBUG | `●` | Blue |
+| INFO | `✓` | Green |
+| WARN | `⚠` | Yellow |
+| ERROR | `✕` | Red (bold) |
+
+### Startup Banner
+
+On startup, the server displays:
+1. ASCII art logo
+2. Version information
+3. Configuration summary box showing:
+   - Instance name
+   - Bind address and port
+   - Authentication status
+   - GPU name and VRAM (if detected)
+   - Batch size (if applicable)
+   - Loaded modules
 
 ### Log Directory
 Logs are written to the `log_dir` specified in the config file (e.g., `logs/moshi-server-rust/stt/`).

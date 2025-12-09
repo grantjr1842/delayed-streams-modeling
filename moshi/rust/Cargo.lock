@@ -2191,6 +2191,7 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
+ "unicode-segmentation",
  "unicode-width 0.2.0",
  "web-time",
 ]
@@ -2752,6 +2753,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "hf-hub",
+ "indicatif",
  "jsonwebtoken",
  "kaudio",
  "lazy_static",
@@ -2762,6 +2764,7 @@ dependencies = [
  "nvml-wrapper",
  "ogg",
  "opus",
+ "owo-colors",
  "prometheus",
  "pyo3",
  "pyo3-ffi",

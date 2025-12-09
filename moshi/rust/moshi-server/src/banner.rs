@@ -1,10 +1,12 @@
 //! Server banner and styling utilities for beautiful console output.
 //!
 //! This module provides ASCII art banners, boxed configuration displays,
-//! and consistent styling for server startup messages.
+//! progress indicators, and consistent styling for server startup messages.
 
+use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
+use std::time::Duration;
 
 /// ASCII art logo for moshi-server
 const LOGO: &str = r#"
@@ -343,6 +345,245 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+// ============================================================================
+// Progress Indicators
+// ============================================================================
+
+/// Create a spinner progress bar for indeterminate operations (e.g., model loading)
+pub fn create_spinner(message: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+            .template("{spinner:.cyan} {msg}")
+            .expect("Invalid progress style template"),
+    );
+    pb.set_message(message.to_string());
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb
+}
+
+/// Create a progress bar with percentage for determinate operations
+pub fn create_progress_bar(total: u64, message: &str) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)")
+            .expect("Invalid progress style template")
+            .progress_chars("█▓▒░"),
+    );
+    pb.set_message(message.to_string());
+    pb
+}
+
+/// A scoped spinner that automatically finishes when dropped
+pub struct ScopedSpinner {
+    pb: ProgressBar,
+    success_msg: String,
+}
+
+impl ScopedSpinner {
+    /// Create a new scoped spinner
+    pub fn new(message: &str, success_msg: &str) -> Self {
+        Self {
+            pb: create_spinner(message),
+            success_msg: success_msg.to_string(),
+        }
+    }
+
+    /// Mark the spinner as successful and finish with a checkmark
+    pub fn success(self) {
+        self.pb.finish_with_message(format!(
+            "{} {}",
+            chars::INFO.green(),
+            self.success_msg
+        ));
+    }
+
+    /// Mark the spinner as failed and finish with an X
+    pub fn failure(self, error: &str) {
+        self.pb.finish_with_message(format!(
+            "{} {} - {}",
+            chars::ERROR.red(),
+            self.success_msg,
+            error.red()
+        ));
+    }
+}
+
+impl Drop for ScopedSpinner {
+    fn drop(&mut self) {
+        // If not explicitly finished, just stop the spinner
+        if !self.pb.is_finished() {
+            self.pb.finish_and_clear();
+        }
+    }
+}
+
+// ============================================================================
+// Table Formatter
+// ============================================================================
+
+/// A simple table formatter for multi-row data display
+pub struct TableFormatter {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+    use_color: bool,
+}
+
+impl TableFormatter {
+    /// Create a new table with the given headers
+    pub fn new(headers: Vec<&str>) -> Self {
+        Self {
+            headers: headers.into_iter().map(String::from).collect(),
+            rows: Vec::new(),
+            use_color: supports_color(),
+        }
+    }
+
+    /// Set whether to use colored output
+    pub fn with_color(mut self, use_color: bool) -> Self {
+        self.use_color = use_color;
+        self
+    }
+
+    /// Add a row to the table
+    pub fn add_row(&mut self, row: Vec<&str>) {
+        self.rows.push(row.into_iter().map(String::from).collect());
+    }
+
+    /// Calculate column widths based on content
+    fn column_widths(&self) -> Vec<usize> {
+        let mut widths: Vec<usize> = self.headers.iter().map(|h| h.chars().count()).collect();
+
+        for row in &self.rows {
+            for (i, cell) in row.iter().enumerate() {
+                if i < widths.len() {
+                    widths[i] = widths[i].max(cell.chars().count());
+                }
+            }
+        }
+
+        widths
+    }
+
+    /// Print the table to stdout
+    pub fn print(&self) {
+        let widths = self.column_widths();
+        let total_width: usize = widths.iter().sum::<usize>() + (widths.len() * 3) + 1;
+
+        // Top border
+        let top_border: String = format!(
+            "{}{}{}",
+            chars::TOP_LEFT,
+            widths
+                .iter()
+                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(&chars::HORIZONTAL.to_string()),
+            chars::TOP_RIGHT
+        );
+
+        if self.use_color {
+            println!("{}", top_border.bright_blue());
+        } else {
+            println!("{}", top_border);
+        }
+
+        // Header row
+        let header_row: String = format!(
+            "{} {} {}",
+            chars::VERTICAL,
+            self.headers
+                .iter()
+                .zip(&widths)
+                .map(|(h, w)| format!("{:^width$}", h, width = *w))
+                .collect::<Vec<_>>()
+                .join(&format!(" {} ", chars::VERTICAL)),
+            chars::VERTICAL
+        );
+
+        if self.use_color {
+            println!(
+                "{} {} {}",
+                chars::VERTICAL.bright_blue(),
+                self.headers
+                    .iter()
+                    .zip(&widths)
+                    .map(|(h, w)| format!("{:^width$}", h.bright_yellow(), width = *w))
+                    .collect::<Vec<_>>()
+                    .join(&format!(" {} ", chars::VERTICAL.bright_blue())),
+                chars::VERTICAL.bright_blue()
+            );
+        } else {
+            println!("{}", header_row);
+        }
+
+        // Header separator
+        let separator: String = format!(
+            "{}{}{}",
+            chars::T_LEFT,
+            widths
+                .iter()
+                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(&chars::HORIZONTAL.to_string()),
+            chars::T_RIGHT
+        );
+
+        if self.use_color {
+            println!("{}", separator.bright_blue());
+        } else {
+            println!("{}", separator);
+        }
+
+        // Data rows
+        for row in &self.rows {
+            if self.use_color {
+                println!(
+                    "{} {} {}",
+                    chars::VERTICAL.bright_blue(),
+                    row.iter()
+                        .zip(&widths)
+                        .map(|(cell, w)| format!("{:<width$}", cell, width = *w))
+                        .collect::<Vec<_>>()
+                        .join(&format!(" {} ", chars::VERTICAL.bright_blue())),
+                    chars::VERTICAL.bright_blue()
+                );
+            } else {
+                println!(
+                    "{} {} {}",
+                    chars::VERTICAL,
+                    row.iter()
+                        .zip(&widths)
+                        .map(|(cell, w)| format!("{:<width$}", cell, width = *w))
+                        .collect::<Vec<_>>()
+                        .join(&format!(" {} ", chars::VERTICAL)),
+                    chars::VERTICAL
+                );
+            }
+        }
+
+        // Bottom border
+        let bottom_border: String = format!(
+            "{}{}{}",
+            chars::BOTTOM_LEFT,
+            widths
+                .iter()
+                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(&chars::HORIZONTAL.to_string()),
+            chars::BOTTOM_RIGHT
+        );
+
+        if self.use_color {
+            println!("{}", bottom_border.bright_blue());
+        } else {
+            println!("{}", bottom_border);
+        }
     }
 }
 

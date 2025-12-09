@@ -61,6 +61,10 @@ struct WorkerArgs {
     /// Maximum number of rotated log files to keep (default: 10)
     #[clap(long, default_value = "10")]
     log_max_files: usize,
+
+    /// Use JSON structured logging
+    #[clap(long)]
+    json: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -542,6 +546,7 @@ struct LogConfig {
     silent: bool,
     max_size_mb: u64,
     max_files: usize,
+    json: bool,
 }
 
 fn tracing_init(
@@ -579,18 +584,33 @@ fn tracing_init(
     // Custom timestamp format: "2025-12-02 01:36:42.113" (more readable than ISO 8601)
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string());
     
-    // File layer: NO ANSI colors, clean timestamps
-    let file_layer = tracing_subscriber::fmt::layer()
-        .event_format(
-            tracing_subscriber::fmt::format()
-                .with_timer(timer.clone())
-                .with_file(true)
-                .with_line_number(true)
-                .with_target(true)
-                .with_ansi(false)  // No ANSI escape codes in log files
-        )
-        .with_writer(non_blocking_file)
-        .with_filter(filter);
+    // File layer: NO ANSI colors, clean timestamps (or JSON)
+    let file_layer = if config.json {
+        let json_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_timer(timer.clone())
+            .with_file(true)
+            .with_line_number(true)
+            .with_target(true)
+            .with_writer(non_blocking_file)
+            .with_filter(filter.clone());
+        
+        json_layer.boxed()
+    } else {
+        let text_layer = tracing_subscriber::fmt::layer()
+            .event_format(
+                tracing_subscriber::fmt::format()
+                    .with_timer(timer.clone())
+                    .with_file(true)
+                    .with_line_number(true)
+                    .with_target(true)
+                    .with_ansi(false)  // No ANSI escape codes in log files
+            )
+            .with_writer(non_blocking_file)
+            .with_filter(filter.clone());
+        
+        text_layer.boxed()
+    };
     
     if config.silent {
         // File-only logging
@@ -598,18 +618,33 @@ fn tracing_init(
             .with(file_layer)
             .init();
     } else {
-        // Console layer: WITH ANSI colors for terminal
-        let console_layer = tracing_subscriber::fmt::layer()
-            .event_format(
-                tracing_subscriber::fmt::format()
-                    .with_timer(timer)
-                    .with_file(true)
-                    .with_line_number(true)
-                    .with_target(true)
-                    .with_ansi(true)  // ANSI colors for terminal
-            )
-            .with_writer(std::io::stdout)
-            .with_filter(filter);
+        // Console layer: WITH ANSI colors for terminal (or JSON)
+        let console_layer = if config.json {
+             let json_layer = tracing_subscriber::fmt::layer()
+                .json()
+                .with_timer(timer)
+                .with_file(true)
+                .with_line_number(true)
+                .with_target(true)
+                .with_writer(std::io::stdout)
+                .with_filter(filter);
+            
+            json_layer.boxed()
+        } else {
+            let text_layer = tracing_subscriber::fmt::layer()
+                .event_format(
+                    tracing_subscriber::fmt::format()
+                        .with_timer(timer)
+                        .with_file(true)
+                        .with_line_number(true)
+                        .with_target(true)
+                        .with_ansi(true)  // ANSI colors for terminal
+                )
+                .with_writer(std::io::stdout)
+                .with_filter(filter);
+            
+            text_layer.boxed()
+        };
         
         tracing_subscriber::registry()
             .with(file_layer)
@@ -622,6 +657,7 @@ fn tracing_init(
         log_dir = %config.log_dir,
         max_size_mb = config.max_size_mb,
         max_files = config.max_files,
+        json = config.json,
         "Logging initialized with rotation"
     );
     
@@ -707,6 +743,7 @@ async fn main_() -> Result<()> {
                 silent: args.silent,
                 max_size_mb: args.log_max_size_mb,
                 max_files: args.log_max_files,
+                json: args.json,
             };
             let _guard = tracing_init(log_config)?;
 

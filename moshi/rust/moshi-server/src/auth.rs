@@ -227,6 +227,53 @@ pub struct BetterAuthClaims {
     pub exp: Option<i64>,
 }
 
+/// Check if a user's approval status allows access.
+/// Returns Ok(()) if status is "approved" or not set (backwards compatibility).
+/// Returns Err with appropriate AuthError for "pending" or "rejected" status.
+pub fn check_approval_status(claims: &BetterAuthClaims) -> Result<(), AuthError> {
+    let email = claims.user.email.as_deref();
+    
+    match claims.user.status.as_deref() {
+        // Approved or not set (backwards compatibility with existing JWTs)
+        Some("approved") | None => {
+            tracing::debug!(
+                user_id = %claims.user.id,
+                status = ?claims.user.status,
+                "User approval status: OK"
+            );
+            Ok(())
+        }
+        // Pending approval
+        Some("pending") => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                "User account is pending approval"
+            );
+            Err(AuthError::pending_approval(email))
+        }
+        // Rejected
+        Some("rejected") => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                "User account has been rejected"
+            );
+            Err(AuthError::account_rejected(email))
+        }
+        // Unknown status - treat as rejected for security
+        Some(unknown) => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                status = %unknown,
+                "User has unknown approval status, denying access"
+            );
+            Err(AuthError::account_rejected(email))
+        }
+    }
+}
+
 /// Authentication configuration
 #[derive(Debug, Clone)]
 pub struct AuthConfig {

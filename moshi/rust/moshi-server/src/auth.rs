@@ -442,7 +442,11 @@ pub fn check(
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
         match validate_jwt(token) {
-            Ok(_) => return Ok(()),
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
+                return Ok(());
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
                 return Err(e);
@@ -453,7 +457,9 @@ pub fn check(
     // Method 3: JWT token via query parameter (?token=...)
     if let Some(token) = query_token {
         match validate_jwt(token) {
-            Ok(_) => {
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
                 tracing::debug!("Authenticated via query token parameter");
                 return Ok(());
             }
@@ -467,7 +473,11 @@ pub fn check(
     // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
-            Ok(_) => return Ok(()),
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
+                return Ok(());
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
                 return Err(e);
@@ -505,7 +515,11 @@ pub fn check_with_user(
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
         match validate_jwt(token) {
-            Ok(claims) => return Ok(Some(claims)),
+            Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
+                return Ok(Some(claims));
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
                 return Err(e);
@@ -517,6 +531,8 @@ pub fn check_with_user(
     if let Some(token) = query_token {
         match validate_jwt(token) {
             Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
                 tracing::debug!("Authenticated via query token parameter");
                 return Ok(Some(claims));
             }
@@ -530,7 +546,11 @@ pub fn check_with_user(
     // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
-            Ok(claims) => return Ok(Some(claims)),
+            Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
+                return Ok(Some(claims));
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
                 return Err(e);

@@ -10,12 +10,12 @@
         {"description": "Add ?token= query parameter support for JWT authentication in WebSocket handlers", "done": true, "commit_sha": "875c1250a756dbeb1f91f9ef31ea9af120c71f44", "completed_at": "2025-12-09T14:10:00Z"},
         {"description": "Add role and status fields to UserData struct in auth.rs", "done": true, "commit_sha": "40499aa8c691b93d508af8696f2308feb036b63a", "completed_at": "2025-12-09T14:12:00Z"},
         {"description": "Create AuthErrorCode::PendingApproval and AuthErrorCode::AccountRejected error variants", "done": true, "commit_sha": "583847c32e54f72330056e8dfdb27abbee6f8fca", "completed_at": "2025-12-09T14:14:00Z"},
-        {"description": "Implement check_approval_status() helper that validates status == 'approved'", "done": false},
+        {"description": "Implement check_approval_status() helper that validates status == 'approved'", "done": true, "commit_sha": "56e741da5e5fa45a5d181fa7729b14f0f71fab59", "completed_at": "2025-12-09T14:16:00Z"},
         {"description": "Update check() and check_with_user() to validate user approval status when JWT is used", "done": false},
         {"description": "Add unit tests for new authentication flows", "done": false},
         {"description": "Update docs/MOSHI_SERVER_SETUP.md with new auth behavior", "done": false}
       ],
-      "current_task_index": 3,
+      "current_task_index": 4,
       "status": "in_progress",
       "github_issue": {
         "number": 67,
@@ -34,5 +34,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-09T14:14:00Z"
+  "last_updated": "2025-12-09T14:16:00Z"
 }

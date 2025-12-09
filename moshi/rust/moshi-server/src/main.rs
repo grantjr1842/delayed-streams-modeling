@@ -1036,18 +1036,26 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
     ) -> utils::AxumResult<Response> {
         tracing::info!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
-        match auth::check_with_user(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            Ok(claims) => {
-                if let Some(c) = claims {
-                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
-                }
-            }
-            Err(err) => return Ok(err.into_response()),
-        }
+        let auth_result = auth::check_with_user(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
+        
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
         let upg =
-            ws.write_buffer_size(0).on_upgrade(move |v| tts_websocket(v, tts, tts_query, addr));
+            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                if let Ok(Some(c)) = auth_result {
+                    tracing::debug!(user_id = %c.user.id, session_id = %c.session.id, "authenticated via JWT");
+                }
+                tts_websocket(socket, tts, tts_query, addr).await
+            });
         Ok(upg)
     }
 
@@ -1337,13 +1345,23 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling asr-streaming query");
-        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(err.into_response());
-        }
+        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
+        
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
         let upg =
-            ws.write_buffer_size(0).on_upgrade(move |v| asr_websocket(v, asr, asr_query, addr));
+            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                asr_websocket(socket, asr, asr_query, addr).await
+            });
         Ok(upg)
     }
     axum::Router::new()
@@ -1399,13 +1417,23 @@ fn batched_asr_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling batched asr-streaming query");
-        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(err.into_response());
-        }
+        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
+        
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
         let upg =
-            ws.write_buffer_size(0).on_upgrade(move |v| asr_websocket(v, asr, asr_query, addr));
+            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                asr_websocket(socket, asr, asr_query, addr).await
+            });
         Ok(upg)
     }
     axum::Router::new()
@@ -1479,12 +1507,22 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
     ) -> utils::AxumResult<Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
-        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(err.into_response());
-        }
+        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
+        
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
-        let upg = ws.write_buffer_size(0).on_upgrade(move |v| py_websocket(v, py, py_query, addr));
+        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            if let Err(err) = auth_result {
+                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                let _ = crate::utils::close_with_reason(
+                    &mut socket,
+                    crate::protocol::CloseCode::AuthenticationFailed,
+                    Some("Authentication failed"),
+                ).await;
+                return;
+            }
+            py_websocket(socket, py, py_query, addr).await
+        });
         Ok(upg)
     }
     axum::Router::new()
@@ -1535,14 +1573,24 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
-        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids) {
-            return Ok(err.into_response());
-        }
+        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.1.config.authorized_ids);
+        
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
         let upg = ws
             .write_buffer_size(0)
-            .on_upgrade(move |v| py_websocket(v, py_asr, py_asr_query, addr));
+            .on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                py_websocket(socket, py_asr, py_asr_query, addr).await
+            });
         Ok(upg)
     }
     axum::Router::new()
@@ -1584,11 +1632,12 @@ fn mimi_router(
         tracing::info!(addr, "handling mimi-streaming query");
         // It's tricky to set the headers of a websocket in javascript so we pass the token via the
         // query too.
-        if state.0 .0.auth_recv() {
-            if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
-                return Ok(err.into_response());
-            }
-        }
+        let auth_result = if state.0 .0.auth_recv() {
+            auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids)
+        } else {
+            Ok(())
+        };
+        
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),
             None => req.room_id.clone(),
@@ -1596,7 +1645,18 @@ fn mimi_router(
         let state = state.0 .0.clone();
         let upg = ws
             .write_buffer_size(0)
-            .on_upgrade(move |v| mimi_recv_websocket(v, state, room_id, addr));
+            .on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                mimi_recv_websocket(socket, state, room_id, addr).await
+            });
         Ok(upg)
     }
 
@@ -1619,21 +1679,47 @@ fn mimi_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
-        if let Err(err) = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids) {
-            return Ok(err.into_response());
-        }
+        let auth_result = auth::check(&headers, req.auth_id.as_deref(), &state.0 .1.config.authorized_ids);
+        
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),
             None => req.room_id.clone(),
         };
         let room_id = match room_id {
-            None => Err(anyhow::format_err!("no room_id"))?,
-            Some(room_id) => room_id,
+            None => Err(anyhow::format_err!("no room_id")),
+            Some(room_id) => Ok(room_id),
         };
+        
         let state = state.0 .0;
         let upg = ws
             .write_buffer_size(0)
-            .on_upgrade(move |v| mimi_send_websocket(v, state, room_id, addr));
+            .on_upgrade(move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    ).await;
+                    return;
+                }
+                
+                let room_id = match room_id {
+                    Ok(id) => id,
+                    Err(err) => {
+                         tracing::error!(?err, "no room_id, closing socket");
+                         // We could send a CloseCode::InvalidMessage here
+                         let _ = crate::utils::close_with_reason(
+                             &mut socket,
+                             crate::protocol::CloseCode::InvalidMessage,
+                             Some("Missing room_id"),
+                         ).await;
+                         return;
+                    }
+                };
+                
+                mimi_send_websocket(socket, state, room_id, addr).await
+            });
         Ok(upg)
     }
     axum::Router::new()

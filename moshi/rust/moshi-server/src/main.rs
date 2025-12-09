@@ -879,6 +879,9 @@ async fn main_() -> Result<()> {
                 )
                 .layer(
                     tower::ServiceBuilder::new()
+                        .layer(tower_http::request_id::SetRequestIdLayer::x_request_id(
+                            tower_http::request_id::MakeRequestUuid,
+                        ))
                         .layer(tower_http::trace::TraceLayer::new_for_http()),
                 )
                 .with_state(state.clone());

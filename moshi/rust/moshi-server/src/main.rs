@@ -17,6 +17,7 @@ mod asr;
 mod auth;
 mod banner;
 mod batched_asr;
+mod bench;
 mod lm;
 mod logging;
 mod metrics;

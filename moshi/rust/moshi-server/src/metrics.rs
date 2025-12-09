@@ -138,6 +138,32 @@ pub mod warmup {
     }
 }
 
+pub mod system {
+    use super::*;
+    lazy_static! {
+        pub static ref FREE_VRAM: Gauge = register_gauge!(opts!(
+            "system_free_vram_bytes",
+            "Free VRAM in bytes."
+        ))
+        .unwrap();
+        pub static ref USED_VRAM: Gauge = register_gauge!(opts!(
+            "system_used_vram_bytes",
+            "Used VRAM in bytes."
+        ))
+        .unwrap();
+        pub static ref TOTAL_VRAM: Gauge = register_gauge!(opts!(
+            "system_total_vram_bytes",
+            "Total VRAM in bytes."
+        ))
+        .unwrap();
+        pub static ref GPU_UTILIZATION: Gauge = register_gauge!(opts!(
+            "system_gpu_utilization_percent",
+            "GPU utilization percentage."
+        ))
+        .unwrap();
+    }
+}
+
 pub mod errors {
     use prometheus::{register_int_counter_vec, IntCounterVec};
     use lazy_static::lazy_static;

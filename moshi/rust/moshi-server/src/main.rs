@@ -876,6 +876,9 @@ async fn main_() -> Result<()> {
             let state = Arc::new(AppStateInner::new(&args, config)?);
             // Initialize server start time for uptime tracking
             init_server_start_time();
+
+            // Start background metrics updater
+            spawn_metrics_updater();
             
             // End startup span before starting the server
             drop(_enter);
@@ -1215,6 +1218,23 @@ fn get_uptime_seconds() -> u64 {
         .get()
         .map(|start| start.elapsed().as_secs())
         .unwrap_or(0)
+}
+
+fn spawn_metrics_updater() {
+    utils::spawn("metrics_updater", async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            
+            if let Ok(info) = utils::get_gpu_info() {
+                use crate::metrics::system;
+                system::FREE_VRAM.set(info.free_vram as f64);
+                system::TOTAL_VRAM.set(info.total_vram as f64);
+                system::USED_VRAM.set((info.total_vram.saturating_sub(info.free_vram)) as f64);
+                system::GPU_UTILIZATION.set(info.utilization as f64);
+            }
+        }
+    });
 }
 
 async fn server_status(

@@ -13,19 +13,20 @@
       "title": "Enhance Logging Visuals and Structure",
       "branch": "feat/issue-59-visual-logging",
       "tasks": [
-        {"description": "Configure tracing-subscriber for colored, structured output on stdout.", "done": false},
-        {"description": "Implement spans for logical sections (e.g. startup, request handling).", "done": false},
-        {"description": "Ensure ANSI codes are correctly handled (enabled for tty, disabled for file/no-tty).", "done": false},
-        {"description": "Review and improve existing log messages for clarity and consistency.", "done": false}
+        {"description": "Configure tracing-subscriber for colored, structured output on stdout.", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
+        {"description": "Implement spans for logical sections (e.g. startup, request handling).", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
+        {"description": "Ensure ANSI codes are correctly handled (enabled for tty, disabled for file/no-tty).", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"},
+        {"description": "Review and improve existing log messages for clarity and consistency.", "done": true, "commit_sha": "9decdeaef436c93354df4f14ef2c6b0d890abcc5", "completed_at": "2025-12-09T02:20:00Z"}
       ],
-      "current_task_index": 0,
-      "status": "in_progress",
+      "current_task_index": 4,
+      "status": "complete",
+      "completed_at": "2025-12-09T02:22:00Z",
       "github_issue": {
         "number": 59,
         "title": "Enhance Logging Visuals and Structure",
         "body": "Part of #54\n\n## Tasks\n- [ ] Configure tracing-subscriber for colored, structured output on stdout.\n- [ ] Implement spans for logical sections (e.g. startup, request handling).\n- [ ] Ensure ANSI codes are correctly handled (enabled for tty, disabled for file/no-tty).\n- [ ] Review and improve existing log messages for clarity and consistency."
       },
-      "pr_number": null,
+      "pr_number": 60,
       "started_at": "2025-12-09T02:05:00Z"
     },
     {
@@ -41,13 +42,14 @@
         {"description": "Create detailed documentation for VRAM and batch size calculations (math and constants).", "done": false}
       ],
       "current_task_index": 0,
-      "status": "pending",
+      "status": "in_progress",
       "github_issue": {
         "number": 56,
-        "title": "Verify and Tune Auto Batch Size Calculations"
+        "title": "Verify and Tune Auto Batch Size Calculations",
+        "body": "Part of #54\n\n## Tasks\n- [ ] Review DEFAULT_VRAM_RESERVED_MB and other constants.\n- [ ] Validate saturating_sub usage prevents underflow but might mask configuration errors.\n- [ ] Check if mimi_mb estimate is accurate.\n- [ ] Add memory usage tracking/metrics during runtime to validate static estimates.\n- [ ] Consider making per_batch_item_mb dynamic based on model/dtype.\n- [ ] Create detailed documentation for VRAM and batch size calculations (math and constants)."
       },
       "pr_number": null,
-      "started_at": null
+      "started_at": "2025-12-09T02:25:00Z"
     },
     {
       "number": 58,
@@ -69,6 +71,6 @@
       "started_at": null
     }
   ],
-  "current_issue_index": 0,
-  "last_updated": "2025-12-08T21:30:00Z"
+  "current_issue_index": 1,
+  "last_updated": "2025-12-09T02:20:00Z"
 }

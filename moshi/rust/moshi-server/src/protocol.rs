@@ -81,18 +81,12 @@ impl CloseCode {
 
     /// Creates a WebSocket CloseFrame with this code and reason
     pub fn to_close_frame(&self) -> ws::CloseFrame {
-        ws::CloseFrame {
-            code: self.code(),
-            reason: self.reason().into(),
-        }
+        ws::CloseFrame { code: self.code(), reason: self.reason().into() }
     }
 
     /// Creates a WebSocket CloseFrame with a custom reason message
     pub fn with_reason(&self, reason: impl Into<String>) -> ws::CloseFrame {
-        ws::CloseFrame {
-            code: self.code(),
-            reason: reason.into().into(),
-        }
+        ws::CloseFrame { code: self.code(), reason: reason.into().into() }
     }
 }
 

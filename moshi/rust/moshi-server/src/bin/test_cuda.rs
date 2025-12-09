@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // input: [batch, channels, length] = [1, 8, 8]
     let inp_tr = Tensor::randn(0f32, 1f32, (1, 8, 8), &device)?;
     // weight: [in_channels, out_channels, kernel_size] = [8, 4, 3]
-    // Note: candle conv_transpose1d weight shape might be different? 
+    // Note: candle conv_transpose1d weight shape might be different?
     // Usually [in_channels, out_channels/groups, kernel_size]
     let w_tr = Tensor::randn(0f32, 1f32, (8, 4, 3), &device)?;
     let conv_tr = inp_tr.conv_transpose1d(&w_tr, 0, 0, 1, 1, 1)?;

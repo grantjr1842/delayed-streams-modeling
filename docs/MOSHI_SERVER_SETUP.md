@@ -75,7 +75,41 @@ The `.env` file is loaded before any configuration parsing, so all environment v
 
 ### Authentication
 
-The server supports loading authorized keys from the `MOSHI_API_KEY` environment variable. This is preferred over hardcoding tokens in the configuration file.
+The server supports multiple authentication methods, with priority order:
+
+1. **Legacy API Key** - Via `kyutai-api-key` header or `auth_id` query parameter
+2. **Bearer Token** - Via `Authorization: Bearer <jwt>` header
+3. **JWT Query Parameter** - Via `?token=<jwt>` query parameter (useful for WebSockets where setting headers is difficult)
+4. **Session Cookie** - Via `better-auth.session_token` cookie
+
+**Environment Variables:**
+- `MOSHI_API_KEY`: Comma-separated list of authorized API keys
+- `BETTER_AUTH_SECRET`: JWT secret for Better Auth validation (must match auth-server)
+
+### User Approval Status
+
+When using JWT authentication (Better Auth), the server validates the user's approval status from the token claims:
+
+| Status | Behavior |
+|--------|----------|
+| `approved` | Access granted |
+| `pending` | Access denied with `pending_approval` error (HTTP 403) |
+| `rejected` | Access denied with `account_rejected` error (HTTP 403) |
+| Not set (null) | Access granted (backwards compatibility with older JWTs) |
+| Unknown value | Access denied with `account_rejected` error (security fallback) |
+
+**JWT Claims Structure:**
+```json
+{
+  "user": {
+    "id": "user-123",
+    "email": "user@example.com",
+    "status": "approved",
+    "role": "user"
+  },
+  "session": { ... }
+}
+```
 
 ## 4. Turing (RTX 20xx) Compatibility
 
@@ -269,10 +303,12 @@ The server exposes Prometheus metrics for error tracking and observability at `/
 - `internal` - Internal server error
 
 **Auth Errors** (`auth_error_total`):
-- `authentication_failed` - No valid authentication method found
+- `missing_credentials` - No valid authentication method found
 - `invalid_key` - Invalid API key
 - `expired_token` - Expired JWT token
 - `jwt_validation_failed` - JWT validation failed
+- `pending_approval` - User account pending admin approval (HTTP 403)
+- `account_rejected` - User account rejected by admin (HTTP 403)
 
 ### Structured Logging
 

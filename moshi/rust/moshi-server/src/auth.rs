@@ -36,6 +36,10 @@ pub enum AuthErrorCode {
     ExpiredToken,
     MissingCredentials,
     JwtValidationFailed,
+    /// Account is pending admin approval
+    PendingApproval,
+    /// Account has been rejected by admin
+    AccountRejected,
 }
 
 impl std::fmt::Display for AuthErrorCode {
@@ -45,6 +49,8 @@ impl std::fmt::Display for AuthErrorCode {
             Self::ExpiredToken => write!(f, "expired_token"),
             Self::MissingCredentials => write!(f, "missing_credentials"),
             Self::JwtValidationFailed => write!(f, "jwt_validation_failed"),
+            Self::PendingApproval => write!(f, "pending_approval"),
+            Self::AccountRejected => write!(f, "account_rejected"),
         }
     }
 }
@@ -103,6 +109,34 @@ impl AuthError {
         }
     }
 
+    /// Account is pending admin approval
+    pub fn pending_approval(email: Option<&str>) -> Self {
+        let message = match email {
+            Some(e) => format!("Account {} is pending admin approval", e),
+            None => "Account is pending admin approval".to_string(),
+        };
+        Self {
+            error: "forbidden",
+            code: AuthErrorCode::PendingApproval,
+            message,
+            hint: "Please wait for an administrator to approve your account",
+        }
+    }
+
+    /// Account has been rejected by admin
+    pub fn account_rejected(email: Option<&str>) -> Self {
+        let message = match email {
+            Some(e) => format!("Account {} has been rejected", e),
+            None => "Account has been rejected".to_string(),
+        };
+        Self {
+            error: "forbidden",
+            code: AuthErrorCode::AccountRejected,
+            message,
+            hint: "Contact the administrator for more information",
+        }
+    }
+
     /// Get the error code as a string for metrics labels
     pub fn error_type(&self) -> &'static str {
         match self.code {
@@ -110,6 +144,8 @@ impl AuthError {
             AuthErrorCode::ExpiredToken => "expired_token",
             AuthErrorCode::MissingCredentials => "missing_credentials",
             AuthErrorCode::JwtValidationFailed => "jwt_validation_failed",
+            AuthErrorCode::PendingApproval => "pending_approval",
+            AuthErrorCode::AccountRejected => "account_rejected",
         }
     }
 }
@@ -168,6 +204,12 @@ pub struct UserData {
     /// User image URL
     #[serde(default)]
     pub image: Option<String>,
+    /// User role (e.g., "user", "admin")
+    #[serde(default)]
+    pub role: Option<String>,
+    /// User approval status (e.g., "pending", "approved", "rejected")
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// Better Auth session claims structure
@@ -183,6 +225,53 @@ pub struct BetterAuthClaims {
     pub iat: Option<i64>,
     #[serde(default)]
     pub exp: Option<i64>,
+}
+
+/// Check if a user's approval status allows access.
+/// Returns Ok(()) if status is "approved" or not set (backwards compatibility).
+/// Returns Err with appropriate AuthError for "pending" or "rejected" status.
+pub fn check_approval_status(claims: &BetterAuthClaims) -> Result<(), AuthError> {
+    let email = claims.user.email.as_deref();
+    
+    match claims.user.status.as_deref() {
+        // Approved or not set (backwards compatibility with existing JWTs)
+        Some("approved") | None => {
+            tracing::debug!(
+                user_id = %claims.user.id,
+                status = ?claims.user.status,
+                "User approval status: OK"
+            );
+            Ok(())
+        }
+        // Pending approval
+        Some("pending") => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                "User account is pending approval"
+            );
+            Err(AuthError::pending_approval(email))
+        }
+        // Rejected
+        Some("rejected") => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                "User account has been rejected"
+            );
+            Err(AuthError::account_rejected(email))
+        }
+        // Unknown status - treat as rejected for security
+        Some(unknown) => {
+            tracing::warn!(
+                user_id = %claims.user.id,
+                email = ?email,
+                status = %unknown,
+                "User has unknown approval status, denying access"
+            );
+            Err(AuthError::account_rejected(email))
+        }
+    }
 }
 
 /// Authentication configuration
@@ -216,10 +305,7 @@ impl AuthConfig {
         // Load JWT secret for Better Auth
         let jwt_secret = std::env::var("BETTER_AUTH_SECRET").ok();
 
-        Self {
-            authorized_ids,
-            jwt_secret,
-        }
+        Self { authorized_ids, jwt_secret }
     }
 
     /// Log authentication configuration (call after tracing is initialized)
@@ -248,9 +334,7 @@ pub fn mask_key(key: &str) -> String {
 
 /// Get the JWT secret from environment (cached)
 fn get_jwt_secret() -> Option<&'static str> {
-    JWT_SECRET
-        .get_or_init(|| std::env::var("BETTER_AUTH_SECRET").ok())
-        .as_deref()
+    JWT_SECRET.get_or_init(|| std::env::var("BETTER_AUTH_SECRET").ok()).as_deref()
 }
 
 /// Extract Bearer token from Authorization header
@@ -263,17 +347,12 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 /// Extract session token from cookie
 fn extract_session_cookie(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get("cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let cookie = cookie.trim();
-                cookie
-                    .strip_prefix(SESSION_COOKIE)
-                    .and_then(|rest| rest.strip_prefix('='))
-            })
+    headers.get("cookie").and_then(|v| v.to_str().ok()).and_then(|cookies| {
+        cookies.split(';').find_map(|cookie| {
+            let cookie = cookie.trim();
+            cookie.strip_prefix(SESSION_COOKIE).and_then(|rest| rest.strip_prefix('='))
         })
+    })
 }
 
 /// Validate a Better Auth JWT token
@@ -335,19 +414,18 @@ fn validate_jwt(token: &str) -> Result<BetterAuthClaims, AuthError> {
 /// Check authentication using multiple methods:
 /// 1. Legacy API key (kyutai-api-key header or query param)
 /// 2. Bearer token (Authorization header with JWT)
-/// 3. Session cookie (better-auth.session_token)
+/// 3. JWT token via query parameter (?token=...)
+/// 4. Session cookie (better-auth.session_token)
 ///
 /// Returns Ok(()) if any method succeeds, Err(AuthError) with structured JSON otherwise.
 pub fn check(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
+    query_token: Option<&str>,
     authorized_ids: &HashSet<String>,
 ) -> Result<(), AuthError> {
     // Method 1: Legacy API key authentication
-    let api_key = headers
-        .get(ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .or(query_auth_id);
+    let api_key = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).or(query_auth_id);
 
     if let Some(key) = api_key {
         if authorized_ids.contains(key) {
@@ -364,7 +442,11 @@ pub fn check(
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
         match validate_jwt(token) {
-            Ok(_) => return Ok(()),
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
+                return Ok(());
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
                 return Err(e);
@@ -372,10 +454,30 @@ pub fn check(
         }
     }
 
-    // Method 3: Session cookie
+    // Method 3: JWT token via query parameter (?token=...)
+    if let Some(token) = query_token {
+        match validate_jwt(token) {
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
+                tracing::debug!("Authenticated via query token parameter");
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                return Err(e);
+            }
+        }
+    }
+
+    // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
-            Ok(_) => return Ok(()),
+            Ok(claims) => {
+                // Validate approval status
+                check_approval_status(&claims)?;
+                return Ok(());
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
                 return Err(e);
@@ -392,13 +494,11 @@ pub fn check(
 pub fn check_with_user(
     headers: &HeaderMap,
     query_auth_id: Option<&str>,
+    query_token: Option<&str>,
     authorized_ids: &HashSet<String>,
 ) -> Result<Option<BetterAuthClaims>, AuthError> {
     // Method 1: Legacy API key authentication
-    let api_key = headers
-        .get(ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .or(query_auth_id);
+    let api_key = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).or(query_auth_id);
 
     if let Some(key) = api_key {
         if authorized_ids.contains(key) {
@@ -415,7 +515,11 @@ pub fn check_with_user(
     // Method 2: Bearer token (JWT)
     if let Some(token) = extract_bearer_token(headers) {
         match validate_jwt(token) {
-            Ok(claims) => return Ok(Some(claims)),
+            Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
+                return Ok(Some(claims));
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
                 return Err(e);
@@ -423,10 +527,30 @@ pub fn check_with_user(
         }
     }
 
-    // Method 3: Session cookie
+    // Method 3: JWT token via query parameter (?token=...)
+    if let Some(token) = query_token {
+        match validate_jwt(token) {
+            Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
+                tracing::debug!("Authenticated via query token parameter");
+                return Ok(Some(claims));
+            }
+            Err(e) => {
+                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                return Err(e);
+            }
+        }
+    }
+
+    // Method 4: Session cookie
     if let Some(token) = extract_session_cookie(headers) {
         match validate_jwt(token) {
-            Ok(claims) => return Ok(Some(claims)),
+            Ok(claims) => {
+                // Validate approval status before returning claims
+                check_approval_status(&claims)?;
+                return Ok(Some(claims));
+            }
             Err(e) => {
                 tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
                 return Err(e);
@@ -448,9 +572,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION_HEADER,
-            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
-                .parse()
-                .unwrap(),
+            "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".parse().unwrap(),
         );
         assert_eq!(
             extract_bearer_token(&headers),
@@ -463,9 +585,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "cookie",
-            "other=value; better-auth.session_token=abc123; another=test"
-                .parse()
-                .unwrap(),
+            "other=value; better-auth.session_token=abc123; another=test".parse().unwrap(),
         );
         assert_eq!(extract_session_cookie(&headers), Some("abc123"));
     }
@@ -478,7 +598,7 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("test-key".to_string());
 
-        assert!(check(&headers, None, &authorized).is_ok());
+        assert!(check(&headers, None, None, &authorized).is_ok());
     }
 
     #[test]
@@ -487,8 +607,8 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("query-key".to_string());
 
-        assert!(check(&headers, Some("query-key"), &authorized).is_ok());
-        assert!(check(&headers, Some("wrong-key"), &authorized).is_err());
+        assert!(check(&headers, Some("query-key"), None, &authorized).is_ok());
+        assert!(check(&headers, Some("wrong-key"), None, &authorized).is_err());
     }
 
     #[test]
@@ -499,7 +619,7 @@ mod tests {
         let mut authorized = HashSet::new();
         authorized.insert("correct-key".to_string());
 
-        let err = check(&headers, None, &authorized).unwrap_err();
+        let err = check(&headers, None, None, &authorized).unwrap_err();
         assert!(matches!(err.code, AuthErrorCode::InvalidKey));
     }
 
@@ -508,7 +628,7 @@ mod tests {
         let headers = HeaderMap::new();
         let authorized = HashSet::new();
 
-        let err = check(&headers, None, &authorized).unwrap_err();
+        let err = check(&headers, None, None, &authorized).unwrap_err();
         assert!(matches!(err.code, AuthErrorCode::MissingCredentials));
     }
 
@@ -516,5 +636,96 @@ mod tests {
     fn test_mask_key() {
         assert_eq!(mask_key("short"), "*hidden*");
         assert_eq!(mask_key("abcdefghijklmnop"), "abcdef…mnop");
+    }
+
+    // Helper to create test claims with a specific status
+    fn make_test_claims(status: Option<&str>) -> BetterAuthClaims {
+        BetterAuthClaims {
+            session: SessionData {
+                id: "session-123".to_string(),
+                user_id: "user-456".to_string(),
+                created_at: "2025-01-01T00:00:00Z".to_string(),
+                updated_at: "2025-01-01T00:00:00Z".to_string(),
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+                token: None,
+                ip_address: None,
+                user_agent: None,
+            },
+            user: UserData {
+                id: "user-456".to_string(),
+                name: Some("Test User".to_string()),
+                email: Some("test@example.com".to_string()),
+                email_verified: Some(true),
+                image: None,
+                role: Some("user".to_string()),
+                status: status.map(String::from),
+            },
+            iat: Some(1704067200),
+            exp: Some(4102444800),
+        }
+    }
+
+    #[test]
+    fn test_check_approval_status_approved() {
+        let claims = make_test_claims(Some("approved"));
+        assert!(check_approval_status(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_check_approval_status_none_backwards_compat() {
+        // When status is None (old JWTs without status field), should be allowed
+        let claims = make_test_claims(None);
+        assert!(check_approval_status(&claims).is_ok());
+    }
+
+    #[test]
+    fn test_check_approval_status_pending() {
+        let claims = make_test_claims(Some("pending"));
+        let err = check_approval_status(&claims).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::PendingApproval));
+        assert_eq!(err.error, "forbidden");
+        assert!(err.message.contains("pending"));
+    }
+
+    #[test]
+    fn test_check_approval_status_rejected() {
+        let claims = make_test_claims(Some("rejected"));
+        let err = check_approval_status(&claims).unwrap_err();
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+        assert_eq!(err.error, "forbidden");
+        assert!(err.message.contains("rejected"));
+    }
+
+    #[test]
+    fn test_check_approval_status_unknown_treated_as_rejected() {
+        let claims = make_test_claims(Some("unknown_status"));
+        let err = check_approval_status(&claims).unwrap_err();
+        // Unknown statuses are treated as rejected for security
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+    }
+
+    #[test]
+    fn test_pending_approval_error_with_email() {
+        let err = AuthError::pending_approval(Some("user@example.com"));
+        assert!(matches!(err.code, AuthErrorCode::PendingApproval));
+        assert!(err.message.contains("user@example.com"));
+        assert_eq!(err.error, "forbidden");
+    }
+
+    #[test]
+    fn test_account_rejected_error_with_email() {
+        let err = AuthError::account_rejected(Some("user@example.com"));
+        assert!(matches!(err.code, AuthErrorCode::AccountRejected));
+        assert!(err.message.contains("user@example.com"));
+        assert_eq!(err.error, "forbidden");
+    }
+
+    #[test]
+    fn test_error_type_new_variants() {
+        let pending = AuthError::pending_approval(None);
+        assert_eq!(pending.error_type(), "pending_approval");
+
+        let rejected = AuthError::account_rejected(None);
+        assert_eq!(rejected.error_type(), "account_rejected");
     }
 }

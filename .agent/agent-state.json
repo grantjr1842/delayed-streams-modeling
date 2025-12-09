@@ -1,7 +1,34 @@
 {
-  "phase": "idle",
+  "phase": "merging",
   "epic_issue": null,
-  "issues": [],
+  "issues": [
+    {
+      "number": 67,
+      "title": "Sync authentication with kyutai-stt-web-client",
+      "branch": "feat/issue-67-sync-auth-webclient",
+      "tasks": [
+        {"description": "Add ?token= query parameter support for JWT authentication in WebSocket handlers", "done": true, "commit_sha": "875c1250a756dbeb1f91f9ef31ea9af120c71f44", "completed_at": "2025-12-09T14:10:00Z"},
+        {"description": "Add role and status fields to UserData struct in auth.rs", "done": true, "commit_sha": "40499aa8c691b93d508af8696f2308feb036b63a", "completed_at": "2025-12-09T14:12:00Z"},
+        {"description": "Create AuthErrorCode::PendingApproval and AuthErrorCode::AccountRejected error variants", "done": true, "commit_sha": "583847c32e54f72330056e8dfdb27abbee6f8fca", "completed_at": "2025-12-09T14:14:00Z"},
+        {"description": "Implement check_approval_status() helper that validates status == 'approved'", "done": true, "commit_sha": "56e741da5e5fa45a5d181fa7729b14f0f71fab59", "completed_at": "2025-12-09T14:16:00Z"},
+        {"description": "Update check() and check_with_user() to validate user approval status when JWT is used", "done": true, "commit_sha": "cdb03d3f150c1e6825607e1bfc484d60fba21b3d", "completed_at": "2025-12-09T14:18:00Z"},
+        {"description": "Add unit tests for new authentication flows", "done": true, "commit_sha": "d0f04b5719d7081d8268dd6388e040709150d03e", "completed_at": "2025-12-09T14:22:00Z"},
+        {"description": "Update docs/MOSHI_SERVER_SETUP.md with new auth behavior", "done": true, "commit_sha": "91be2c3ed9aa13583c79019bb023e578c58297fa", "completed_at": "2025-12-09T14:25:00Z"}
+      ],
+      "current_task_index": 6,
+      "status": "complete",
+      "github_issue": {
+        "number": 67,
+        "title": "Sync authentication with kyutai-stt-web-client",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/67"
+      },
+      "pr_number": 68,
+      "github_pr": {"number": 68, "url": "https://github.com/grantjr1842/delayed-streams-modeling/pull/68", "state": "OPEN", "reviewDecision": ""},
+      "started_at": "2025-12-09T14:05:00Z",
+      "completed_at": "2025-12-09T14:25:00Z"
+    }
+  ],
   "current_issue_index": 0,
   "repository": {
     "owner": "grantjr1842",
@@ -9,5 +36,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-08T22:35:00Z"
+  "last_updated": "2025-12-09T14:25:00Z"
 }

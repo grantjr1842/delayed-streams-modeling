@@ -195,8 +195,8 @@ where
 // WebSocket Close Helpers
 // ============================================================================
 
-use axum::extract::ws;
 use crate::protocol::CloseCode;
+use axum::extract::ws;
 use futures_util::SinkExt;
 
 /// Closes a WebSocket connection with a specific close code and reason.
@@ -222,19 +222,19 @@ where
         Some(r) => code.with_reason(r),
         None => code.to_close_frame(),
     };
-    
+
     tracing::info!(
         code = code.code(),
         reason = %frame.reason,
         retryable = code.is_retryable(),
         "closing WebSocket connection"
     );
-    
+
     sender
         .send(ws::Message::Close(Some(frame)))
         .await
         .map_err(|e| anyhow::anyhow!("failed to send close frame: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -382,7 +382,7 @@ impl GpuInfo {
     ) -> BatchSizeCalculation {
         let dtype_bytes = self.dtype_bytes();
         let free_vram_mb = self.free_vram_mb();
-        
+
         // Read configuration from env or use defaults
         let reserved_mb: u64 = std::env::var("MOSHI_VRAM_RESERVED_MB")
             .ok()
@@ -402,25 +402,25 @@ impl GpuInfo {
 
         // Model weights in MB: params × bytes_per_param / 1M
         let model_weights_mb = ((model_params_billions * 1e9) as u64 * dtype_bytes) / (1024 * 1024);
-        
+
         // Available for batching = free - reserved - model_weights - mimi
         let available_for_batching_mb = free_vram_mb
             .saturating_sub(reserved_mb)
             .saturating_sub(model_weights_mb)
             .saturating_sub(mimi_mb);
-        
+
         // Batch size = available / per_item_cost
         let max_batch_size = if adjusted_per_batch_item_mb > 0 {
             (available_for_batching_mb / adjusted_per_batch_item_mb) as usize
         } else {
             1
         };
-        
+
         let recommended_batch_size = max_batch_size.max(1);
 
         // Warn if we are potentially oversubscribing VRAM even at batch size 1
         if available_for_batching_mb == 0 {
-             tracing::warn!(
+            tracing::warn!(
                 "Available VRAM for batching is 0MB. Defaulting to batch size 1, but OOM is likely. \
                  Consider reducing VRAM_RESERVED_MB or using a smaller model."
             );
@@ -445,19 +445,29 @@ impl GpuInfo {
     pub fn log_summary(&self) {
         let header = "═".repeat(60);
         let line = "─".repeat(60);
-        
+
         tracing::info!("\n{}", header);
         tracing::info!("  GPU AUTO-DETECTION SUMMARY");
         tracing::info!("{}", line);
         tracing::info!("  Device:          {}", self.name);
-        tracing::info!("  Compute:         SM {} (CUDA {}.{})",
-            self.sm_version(), self.compute_major, self.compute_minor);
+        tracing::info!(
+            "  Compute:         SM {} (CUDA {}.{})",
+            self.sm_version(),
+            self.compute_major,
+            self.compute_minor
+        );
         tracing::info!("  Total VRAM:      {} MB", self.total_vram_mb());
         tracing::info!("  Free VRAM:       {} MB", self.free_vram_mb());
         tracing::info!("{}", line);
-        tracing::info!("  BF16 Support:    {}", if self.supports_bf16() { "Yes (Ampere+)" } else { "No (Turing/older)" });
-        tracing::info!("  Selected DType:  {} ({} bytes/param)",
-            self.recommended_dtype(), self.dtype_bytes());
+        tracing::info!(
+            "  BF16 Support:    {}",
+            if self.supports_bf16() { "Yes (Ampere+)" } else { "No (Turing/older)" }
+        );
+        tracing::info!(
+            "  Selected DType:  {} ({} bytes/param)",
+            self.recommended_dtype(),
+            self.dtype_bytes()
+        );
         tracing::info!("{}", header);
     }
 }
@@ -493,23 +503,37 @@ impl BatchSizeCalculation {
     /// Logs the calculation breakdown with visual formatting.
     pub fn log_breakdown(&self) {
         let line = "─".repeat(60);
-        
+
         tracing::info!("\n{}", line);
         tracing::info!("  BATCH SIZE CALCULATION");
         tracing::info!("{}", line);
-        tracing::info!("  Model: {:.1}B params × {} bytes = {} MB",
-            self.model_params_billions, self.dtype_bytes, self.model_weights_mb);
+        tracing::info!(
+            "  Model: {:.1}B params × {} bytes = {} MB",
+            self.model_params_billions,
+            self.dtype_bytes,
+            self.model_weights_mb
+        );
         tracing::info!("  + Mimi (est):      {:>6} MB", self.mimi_mb);
         tracing::info!("");
         tracing::info!("  Free VRAM:         {:>6} MB", self.free_vram_mb);
         tracing::info!("  − Reserved:        {:>6} MB  (CUDA runtime)", self.reserved_mb);
         tracing::info!("  − Model weights:   {:>6} MB  (fixed cost)", self.model_weights_mb);
         tracing::info!("  ────────────────────────────");
-        tracing::info!("  = Available:       {:>6} MB  (for batching)", self.available_for_batching_mb);
+        tracing::info!(
+            "  = Available:       {:>6} MB  (for batching)",
+            self.available_for_batching_mb
+        );
         tracing::info!("");
-        tracing::info!("  Per-batch cost:    {:>6} MB  (activations + KV cache)", self.per_batch_item_mb);
-        tracing::info!("  Max batch size:    {:>6}     ({} MB ÷ {} MB)",
-            self.recommended_batch_size, self.available_for_batching_mb, self.per_batch_item_mb);
+        tracing::info!(
+            "  Per-batch cost:    {:>6} MB  (activations + KV cache)",
+            self.per_batch_item_mb
+        );
+        tracing::info!(
+            "  Max batch size:    {:>6}     ({} MB ÷ {} MB)",
+            self.recommended_batch_size,
+            self.available_for_batching_mb,
+            self.per_batch_item_mb
+        );
         tracing::info!("{}", line);
     }
 }
@@ -601,7 +625,7 @@ impl ModelInfo {
         let d = self.d_model as f64;
         // Standard transformer: ~12 * L * d² params (embeddings, attention, FFN)
         let main_params = 12.0 * l * d * d;
-        
+
         // Add depformer params if present
         let depformer_params = if let Some(dep_layers) = self.depformer_layers {
             // Depformer typically has smaller d_model (1024)
@@ -609,24 +633,30 @@ impl ModelInfo {
         } else {
             0.0
         };
-        
+
         (main_params + depformer_params) / 1e9
     }
 
     /// Logs model details with visual formatting matching GpuInfo::log_summary
     pub fn log_summary(&self) {
         let line = "─".repeat(60);
-        
+
         tracing::info!("  MODEL CONFIGURATION");
         tracing::info!("{}", line);
         tracing::info!("  Model File:      {}", self.model_name());
-        tracing::info!("  Architecture:    Transformer (d={}, h={}, L={})",
-            self.d_model, self.num_heads, self.num_layers);
+        tracing::info!(
+            "  Architecture:    Transformer (d={}, h={}, L={})",
+            self.d_model,
+            self.num_heads,
+            self.num_layers
+        );
         tracing::info!("  FFN Dimension:   {}", self.dim_feedforward);
         tracing::info!("  Audio Codebooks: {}", self.audio_codebooks);
         if self.has_depformer {
-            tracing::info!("  Depformer:       Yes ({} layers)",
-                self.depformer_layers.unwrap_or(0));
+            tracing::info!(
+                "  Depformer:       Yes ({} layers)",
+                self.depformer_layers.unwrap_or(0)
+            );
         } else {
             tracing::info!("  Depformer:       No");
         }
@@ -640,25 +670,35 @@ impl GpuInfo {
     pub fn log_combined_summary(&self, model_info: Option<&ModelInfo>) {
         let header = "═".repeat(60);
         let line = "─".repeat(60);
-        
+
         tracing::info!("\n{}", header);
         tracing::info!("  GPU AUTO-DETECTION SUMMARY");
         tracing::info!("{}", line);
         tracing::info!("  Device:          {}", self.name);
-        tracing::info!("  Compute:         SM {} (CUDA {}.{})",
-            self.sm_version(), self.compute_major, self.compute_minor);
+        tracing::info!(
+            "  Compute:         SM {} (CUDA {}.{})",
+            self.sm_version(),
+            self.compute_major,
+            self.compute_minor
+        );
         tracing::info!("  Total VRAM:      {} MB", self.total_vram_mb());
         tracing::info!("  Free VRAM:       {} MB", self.free_vram_mb());
         tracing::info!("{}", line);
-        tracing::info!("  BF16 Support:    {}", if self.supports_bf16() { "Yes (Ampere+)" } else { "No (Turing/older)" });
-        tracing::info!("  Selected DType:  {} ({} bytes/param)",
-            self.recommended_dtype(), self.dtype_bytes());
-        
+        tracing::info!(
+            "  BF16 Support:    {}",
+            if self.supports_bf16() { "Yes (Ampere+)" } else { "No (Turing/older)" }
+        );
+        tracing::info!(
+            "  Selected DType:  {} ({} bytes/param)",
+            self.recommended_dtype(),
+            self.dtype_bytes()
+        );
+
         if let Some(info) = model_info {
             tracing::info!("{}", line);
             info.log_summary();
         }
-        
+
         tracing::info!("{}", header);
     }
 }
@@ -672,7 +712,7 @@ pub fn get_gpu_info() -> Result<GpuInfo> {
     let utilization = device.utilization_rates().map(|u| u.gpu).unwrap_or(0);
     let name = device.name()?;
     let compute_cap = device.cuda_compute_capability()?;
-    
+
     Ok(GpuInfo {
         free_vram: memory_info.free,
         total_vram: memory_info.total,

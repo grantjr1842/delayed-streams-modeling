@@ -1,24 +1,7 @@
 {
-  "phase": "implementing",
+  "phase": "idle",
   "epic_issue": null,
-  "issues": [
-    {
-      "number": 74,
-      "title": "Remove legacy MOSHI_API_KEY authentication",
-      "branch": "feat/issue-74-remove-moshi-api-key",
-      "tasks": [
-        {"description": "Remove MOSHI_API_KEY from .env and .env.example", "done": false},
-        {"description": "Remove MOSHI_API_KEY comments from config TOML files", "done": false},
-        {"description": "Update Python scripts to remove --api-key default", "done": false},
-        {"description": "Update documentation files", "done": false},
-        {"description": "Remove legacy API key code from auth.rs", "done": false}
-      ],
-      "current_task_index": 0,
-      "status": "in_progress",
-      "pr_number": null,
-      "started_at": "2025-12-09T23:30:00Z"
-    }
-  ],
+  "issues": [],
   "current_issue_index": 0,
   "repository": {
     "owner": "grantjr1842",
@@ -26,5 +9,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-09T23:30:00Z"
+  "last_updated": "2025-12-10T00:15:00Z"
 }

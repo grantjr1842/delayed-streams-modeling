@@ -1031,7 +1031,6 @@ struct TtsStreamingQuery {
     voices: Option<Vec<String>>,
     max_seq_len: Option<usize>,
     cfg_alpha: Option<f64>,
-    auth_id: Option<String>,
     /// JWT token for authentication (alternative to Authorization header)
     token: Option<String>,
 }
@@ -1452,14 +1451,12 @@ async fn modules_info(
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct AsrStreamingQuery {
-    auth_id: Option<String>,
     /// JWT token for authentication (alternative to Authorization header)
     token: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct PyStreamingQuery {
-    auth_id: Option<String>,
     /// JWT token for authentication (alternative to Authorization header)
     token: Option<String>,
     #[serde(default = "default_format")]
@@ -1470,7 +1467,6 @@ struct PyStreamingQuery {
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct PyAsrStreamingQuery {
-    auth_id: Option<String>,
     /// JWT token for authentication (alternative to Authorization header)
     token: Option<String>,
 }
@@ -1767,7 +1763,6 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct MimiStreamingQuery {
-    auth_id: Option<String>,
     /// JWT token for authentication (alternative to Authorization header)
     token: Option<String>,
     room_id: Option<String>,

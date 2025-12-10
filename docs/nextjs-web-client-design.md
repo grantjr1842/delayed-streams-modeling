@@ -1649,8 +1649,8 @@ For each user story to be considered complete:
 │  • GET  /api/modules_info         - Loaded modules info                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Authentication (auth.rs):                                                   │
-│  • kyutai-api-key header OR auth_id query param (legacy API key)             │
 │  • Authorization: Bearer <jwt> (Better Auth JWT)                             │
+│  • ?token=<jwt> query param (WebSocket-friendly JWT auth)                    │
 │  • better-auth.session_token cookie (session cookie)                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌─────────────┐ │
@@ -4446,7 +4446,7 @@ export function useAuth(): UseAuthReturn {
     if (!session?.data?.session) return null;
     
     // Return the session token for WebSocket authentication
-    // This will be passed as auth_id query parameter
+    // This will be passed as ?token= query parameter
     return session.data.session.token || session.data.session.id;
   }, []);
   
@@ -6754,34 +6754,32 @@ export default function RootLayout({
 
 The moshi-server supports multiple authentication methods, allowing flexibility for different deployment scenarios:
 
-#### 1. Legacy API Key Authentication
+#### 1. JWT Token Query Parameter (WebSocket-Friendly)
 
-- **Header**: `kyutai-api-key`
-- **Query Parameter**: `auth_id`
-- **Configuration**: Set via `MOSHI_API_KEY` environment variable (comma-separated list)
-- **Use Case**: Programmatic API access, service-to-service communication
+- **Query Parameter**: `token`
+- **Use Case**: WebSocket connections (browsers can't set custom headers on WebSocket)
+- **Note**: This is the recommended method for WebSocket authentication
 
 ```typescript
-// Example: API key via header
-const ws = new WebSocket('wss://stt.example.com/api/asr-streaming');
-// Set header via custom protocol or use query param
-const wsWithAuth = new WebSocket('wss://stt.example.com/api/asr-streaming?auth_id=your-api-key');
+// Example: JWT via query parameter
+const token = await getSessionToken(); // From Better Auth client
+const wsWithJwt = new WebSocket(`wss://stt.example.com/api/asr-streaming?token=${token}`);
 ```
 
-#### 2. Better Auth JWT Authentication
+#### 2. Authorization Header (HTTP Requests)
 
 - **Header**: `Authorization: Bearer <jwt-token>`
-- **Cookie**: `better-auth.session_token`
 - **Configuration**: Set `BETTER_AUTH_SECRET` environment variable (must match auth server)
-- **Use Case**: Web client user authentication
+- **Use Case**: HTTP API requests (not WebSocket)
 
 ```typescript
-// Example: JWT via Authorization header
-const token = await getSessionToken(); // From Better Auth client
-const ws = new WebSocket('wss://stt.example.com/api/asr-streaming');
-// Note: WebSocket API doesn't support custom headers directly
-// Use query param or cookie-based auth instead
-const wsWithJwt = new WebSocket(`wss://stt.example.com/api/asr-streaming?auth_id=${token}`);
+// Example: JWT via Authorization header (for HTTP requests, not WebSocket)
+const token = await getSessionToken();
+const response = await fetch('https://stt.example.com/api/asr', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${token}` },
+  body: audioData,
+});
 ```
 
 #### 3. Session Cookie Authentication
@@ -6896,11 +6894,9 @@ export function buildAuthenticatedWsUrl(
 ): string {
   const url = new URL(baseUrl);
   
-  // Prefer session token (Better Auth JWT) over API key
+  // Use session token (Better Auth JWT) for authentication
   if (options.sessionToken) {
-    url.searchParams.set('auth_id', options.sessionToken);
-  } else if (options.apiKey) {
-    url.searchParams.set('auth_id', options.apiKey);
+    url.searchParams.set('token', options.sessionToken);
   }
   
   return url.toString();
@@ -8037,7 +8033,7 @@ const buildURL = ({ workerAddr, params, workerAuthId, sessionToken, email, textS
   
   // Authentication
   if (workerAuthId) url.searchParams.append("worker_auth_id", workerAuthId);
-  if (sessionToken) url.searchParams.append("auth_id", sessionToken);
+  if (sessionToken) url.searchParams.append("token", sessionToken);
   if (email) url.searchParams.append("email", email);
   
   // Model parameters

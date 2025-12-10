@@ -1,7 +1,31 @@
 {
-  "phase": "idle",
+  "phase": "implementing",
   "epic_issue": null,
-  "issues": [],
+  "issues": [
+    {
+      "number": 76,
+      "title": "Auth cleanup: Remove auth_id, fix InMsg deserialization, improve logging",
+      "branch": "feat/issue-76-auth-cleanup",
+      "tasks": [
+        {"description": "Audit auth_id usage across client and server", "done": false},
+        {"description": "Decide: Remove auth_id or alias to token", "done": false},
+        {"description": "Update client to use token query param for JWT", "done": false},
+        {"description": "Add graceful handling for unexpected InMsg formats", "done": false},
+        {"description": "Consider demoting expired token logs to DEBUG level", "done": false},
+        {"description": "Update docs if auth parameter names change", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "in_progress",
+      "github_issue": {
+        "number": 76,
+        "title": "Auth cleanup: Remove auth_id, fix InMsg deserialization, improve logging",
+        "state": "OPEN",
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/76"
+      },
+      "pr_number": null,
+      "started_at": "2025-12-10T05:15:00Z"
+    }
+  ],
   "current_issue_index": 0,
   "repository": {
     "owner": "grantjr1842",
@@ -9,5 +33,5 @@
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-10T00:15:00Z"
+  "last_updated": "2025-12-10T05:15:00Z"
 }

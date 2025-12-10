@@ -590,7 +590,18 @@ impl M {
                             tracing::info!(?bidx, "received end of stream");
                             in_tx.send(Msg::Eos)?
                         } else {
-                            let msg: InMsg = rmp_serde::from_slice(&msg)?;
+                            let msg: InMsg = match rmp_serde::from_slice(&msg) {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        ?bidx,
+                                        error = %e,
+                                        msg_len = msg.len(),
+                                        "failed to deserialize InMsg, skipping message"
+                                    );
+                                    continue;
+                                }
+                            };
                             match msg {
                                 InMsg::Eos => in_tx.send(Msg::Eos)?,
                                 InMsg::Text { text } => send_text(&text)?,

@@ -1,5 +1,5 @@
 {
-  "phase": "implementing",
+  "phase": "merging",
   "epic_issue": null,
   "issues": [
     {
@@ -7,31 +7,38 @@
       "title": "Auth cleanup: Remove auth_id, fix InMsg deserialization, improve logging",
       "branch": "feat/issue-76-auth-cleanup",
       "tasks": [
-        {"description": "Audit auth_id usage across client and server", "done": false},
-        {"description": "Decide: Remove auth_id or alias to token", "done": false},
-        {"description": "Update client to use token query param for JWT", "done": false},
-        {"description": "Add graceful handling for unexpected InMsg formats", "done": false},
-        {"description": "Consider demoting expired token logs to DEBUG level", "done": false},
-        {"description": "Update docs if auth parameter names change", "done": false}
+        {"description": "Audit auth_id usage across client and server", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"},
+        {"description": "Remove auth_id from server query structs", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"},
+        {"description": "Update client to use token query param for JWT", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"},
+        {"description": "Add graceful handling for unexpected InMsg formats", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"},
+        {"description": "Demote expired token logs to DEBUG level", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"},
+        {"description": "Update docs if auth parameter names change", "done": true, "commit_sha": "a64ac35282706fc111b10b1c690c40735a6f2fde", "completed_at": "2025-12-10T05:20:00Z"}
       ],
-      "current_task_index": 0,
-      "status": "in_progress",
+      "current_task_index": 6,
+      "status": "complete",
       "github_issue": {
         "number": 76,
         "title": "Auth cleanup: Remove auth_id, fix InMsg deserialization, improve logging",
         "state": "OPEN",
         "url": "https://github.com/grantjr1842/delayed-streams-modeling/issues/76"
       },
-      "pr_number": null,
-      "started_at": "2025-12-10T05:15:00Z"
+      "pr_number": 77,
+      "github_pr": {
+        "number": 77,
+        "url": "https://github.com/grantjr1842/delayed-streams-modeling/pull/77",
+        "state": "OPEN",
+        "reviewDecision": ""
+      },
+      "started_at": "2025-12-10T05:15:00Z",
+      "completed_at": "2025-12-10T05:20:00Z"
     }
   ],
-  "current_issue_index": 0,
+  "current_issue_index": 1,
   "repository": {
     "owner": "grantjr1842",
     "name": "delayed-streams-modeling",
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-10T05:15:00Z"
+  "last_updated": "2025-12-10T05:20:00Z"
 }

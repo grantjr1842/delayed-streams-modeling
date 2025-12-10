@@ -2,11 +2,7 @@ static_dir = "./static/"
 log_dir = "logs/moshi-server-rust/tts"
 # Used to identify the server when logging.
 instance_name = "tts"
-# Simple security: require clients to provide an auth token when connecting.
-# It can be set by setting auth_id to the query string, e.g.
-# "localhost:8089/api/tts_streaming?auth_id=public_token"
-# or by setting the kyutai-api-key HTTP header, see the tts_rust_server.py example.
-# authorized_ids can be set here or via MOSHI_API_KEY environment variable (comma-separated)
+# Authentication is handled by Better Auth JWT (BETTER_AUTH_SECRET env var)
 authorized_ids = []
 
 [modules.tts_py]

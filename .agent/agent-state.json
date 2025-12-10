@@ -1,30 +1,30 @@
 {
-  "phase": "merging",
-  "epic_issue": 69,
+  "phase": "implementing",
+  "epic_issue": null,
   "issues": [
     {
-      "number": 70,
-      "title": "Enhanced Logging System with Aesthetic Improvements",
-      "branch": "feat/issue-70-enhanced-logging",
-      "status": "complete",
-      "pr_number": 72,
-      "completed_at": "2025-12-09T17:40:00Z"
-    },
-    {
-      "number": 71,
-      "title": "Performance Optimization Research & Implementation",
-      "branch": "feat/issue-71-performance-optimization",
-      "status": "complete",
-      "pr_number": 73,
-      "completed_at": "2025-12-09T18:00:00Z"
+      "number": 74,
+      "title": "Remove legacy MOSHI_API_KEY authentication",
+      "branch": "feat/issue-74-remove-moshi-api-key",
+      "tasks": [
+        {"description": "Remove MOSHI_API_KEY from .env and .env.example", "done": false},
+        {"description": "Remove MOSHI_API_KEY comments from config TOML files", "done": false},
+        {"description": "Update Python scripts to remove --api-key default", "done": false},
+        {"description": "Update documentation files", "done": false},
+        {"description": "Remove legacy API key code from auth.rs", "done": false}
+      ],
+      "current_task_index": 0,
+      "status": "in_progress",
+      "pr_number": null,
+      "started_at": "2025-12-09T23:30:00Z"
     }
   ],
-  "current_issue_index": 1,
+  "current_issue_index": 0,
   "repository": {
     "owner": "grantjr1842",
     "name": "delayed-streams-modeling",
     "full_name": "grantjr1842/delayed-streams-modeling",
     "default_branch": "main"
   },
-  "last_updated": "2025-12-09T18:00:00Z"
+  "last_updated": "2025-12-09T23:30:00Z"
 }

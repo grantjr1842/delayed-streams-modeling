@@ -214,7 +214,7 @@ async def _shutdown_session(
     await _close_websocket(websocket)
 
 
-async def stream_audio(url: str, api_key: str, show_vad: bool) -> None:
+async def stream_audio(url: str, token: str | None, show_vad: bool) -> None:
     """Stream audio data to a WebSocket server."""
     print("Starting microphone recording...")
     print("Press Ctrl+C to stop recording")
@@ -255,9 +255,9 @@ async def stream_audio(url: str, api_key: str, show_vad: bool) -> None:
             callback=audio_callback,
             blocksize=FRAME_SIZE,  # 80ms blocks
         ):
-            headers = {"kyutai-api-key": api_key}
-            # Instead of using the header, you can authenticate by adding `?auth_id={api_key}` to the URL
-            async with websockets.connect(url, additional_headers=headers) as websocket:
+            # Authenticate via Better Auth JWT token in query string
+            ws_url = f"{url}?token={token}" if token else url
+            async with websockets.connect(ws_url) as websocket:
                 send_task = asyncio.create_task(
                     send_messages(websocket, audio_queue, stop_event)
                 )
@@ -284,7 +284,11 @@ if __name__ == "__main__":
         help="The URL of the server to which to send the audio",
         default="ws://127.0.0.1:8080",
     )
-    parser.add_argument("--api-key", default="public_token")
+    parser.add_argument(
+        "--token",
+        help="Better Auth JWT token for authentication (get from browser session)",
+        default=None,
+    )
     parser.add_argument(
         "--list-devices", action="store_true", help="List available audio devices"
     )
@@ -308,4 +312,4 @@ if __name__ == "__main__":
         sd.default.device[0] = args.device  # Set input device
 
     url = f"{args.url}/api/asr-streaming"
-    asyncio.run(stream_audio(url, args.api_key, args.show_vad))
+    asyncio.run(stream_audio(url, args.token, args.show_vad))

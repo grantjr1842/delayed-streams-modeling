@@ -4,11 +4,11 @@ This document describes how to integrate Better Auth for user authentication wit
 
 ## Overview
 
-The moshi-server supports multiple authentication methods:
+The moshi-server uses Better Auth for authentication:
 
-1. **Legacy API Key** - Simple API key via `kyutai-api-key` header or `auth_id` query parameter
-2. **Better Auth JWT** - JWT tokens from Better Auth's cookie cache feature
-3. **Session Cookie** - Better Auth session cookies (for same-origin deployments)
+1. **Better Auth JWT** - JWT tokens from Better Auth's cookie cache feature
+2. **Session Cookie** - Better Auth session cookies (for same-origin deployments)
+3. **JWT Query Parameter** - For WebSocket connections where headers are difficult to set
 
 ## Server Configuration
 
@@ -16,13 +16,11 @@ The moshi-server supports multiple authentication methods:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `MOSHI_API_KEY` | Comma-separated list of valid API keys | No |
-| `BETTER_AUTH_SECRET` | Shared secret with Better Auth for JWT validation | No (but required for JWT auth) |
+| `BETTER_AUTH_SECRET` | Shared secret with Better Auth for JWT validation | Yes |
 
 ### Example
 
 ```bash
-export MOSHI_API_KEY="key1,key2,key3"
 export BETTER_AUTH_SECRET="your-32-character-secret-here"
 
 moshi-server worker --config configs/config-stt-en-hf.toml
@@ -118,7 +116,7 @@ function MyComponent() {
 
 ### WebSocket Authentication
 
-The session token is automatically passed to WebSocket connections via the `auth_id` query parameter:
+The session token is automatically passed to WebSocket connections via the `token` query parameter:
 
 ```typescript
 // In Conversation.tsx
@@ -177,15 +175,14 @@ The moshi-server expects the following claims in the Better Auth JWT:
 }
 ```
 
-## Backward Compatibility
+## Programmatic Access
 
-The legacy API key authentication continues to work alongside Better Auth:
+For programmatic API access (e.g., Python scripts), obtain a JWT token from the Better Auth server and pass it via:
 
-- API keys can be passed via `kyutai-api-key` header
-- API keys can be passed via `auth_id` query parameter
-- Both methods are checked before JWT validation
+- `Authorization: Bearer <token>` header
+- `?token=<token>` query parameter
 
-This allows programmatic API access while web users authenticate via Better Auth.
+This allows scripts and automated tools to authenticate the same way as web users.
 
 ## Troubleshooting
 

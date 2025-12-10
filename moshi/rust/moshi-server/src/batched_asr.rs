@@ -667,7 +667,18 @@ impl BatchedAsr {
                     Message::Close(_) => break,
                 };
                 last_message_received = std::time::Instant::now();
-                let msg: InMsg = rmp_serde::from_slice(&msg)?;
+                let msg: InMsg = match rmp_serde::from_slice(&msg) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!(
+                            ?batch_idx,
+                            error = %e,
+                            msg_len = msg.len(),
+                            "failed to deserialize InMsg, skipping message"
+                        );
+                        continue;
+                    }
+                };
                 in_tx.send(msg)?;
             }
             Ok::<_, anyhow::Error>(())

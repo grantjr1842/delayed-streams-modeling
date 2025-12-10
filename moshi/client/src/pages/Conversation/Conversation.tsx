@@ -65,9 +65,8 @@ const buildURL = ({
     url.searchParams.append("worker_auth_id", workerAuthId);
   }
   // Better Auth session token for JWT authentication
-  // This is passed as auth_id query param which the server accepts
   if (sessionToken) {
-    url.searchParams.append("auth_id", sessionToken);
+    url.searchParams.append("token", sessionToken);
   }
   if (email) {
     url.searchParams.append("email", email);

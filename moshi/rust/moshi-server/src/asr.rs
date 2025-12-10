@@ -142,7 +142,17 @@ impl Asr {
                     ws::Message::Ping(_) | ws::Message::Pong(_) | ws::Message::Text(_) => continue,
                     ws::Message::Close(_) => break,
                 };
-                let msg: InMsg = rmp_serde::from_slice(&msg)?;
+                let msg: InMsg = match rmp_serde::from_slice(&msg) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            msg_len = msg.len(),
+                            "failed to deserialize InMsg, skipping message"
+                        );
+                        continue;
+                    }
+                };
                 let pcm = match msg {
                     // Init is only used in batched mode.
                     InMsg::Init => None,

@@ -382,7 +382,12 @@ pub fn check(
                 return Ok(());
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: JWT expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                }
                 return Err(e);
             }
         }
@@ -398,7 +403,12 @@ pub fn check(
                 return Ok(());
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: query token expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                }
                 return Err(e);
             }
         }
@@ -413,7 +423,12 @@ pub fn check(
                 return Ok(());
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: session cookie expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                }
                 return Err(e);
             }
         }
@@ -438,7 +453,12 @@ pub fn check_with_user(
                 return Ok(claims);
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: JWT expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: JWT validation error");
+                }
                 return Err(e);
             }
         }
@@ -454,7 +474,12 @@ pub fn check_with_user(
                 return Ok(claims);
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: query token expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: query token validation error");
+                }
                 return Err(e);
             }
         }
@@ -469,7 +494,12 @@ pub fn check_with_user(
                 return Ok(claims);
             }
             Err(e) => {
-                tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                // Demote expired token to debug - it's expected behavior, not a security issue
+                if matches!(e.code, AuthErrorCode::ExpiredToken) {
+                    tracing::debug!(error_type = %e.code, "Authentication failed: session cookie expired");
+                } else {
+                    tracing::warn!(error_type = %e.code, "Authentication failed: session cookie validation error");
+                }
                 return Err(e);
             }
         }

@@ -514,21 +514,33 @@ impl M {
         let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(32);
 
         crate::utils::spawn("send_loop", async move {
+            use bytes::BufMut;
+
             let mut wav_buffer = Vec::new();
             let mut pcm_buf: Vec<f32> = Vec::new();
             moshi::wav::write_wav_header(&mut wav_buffer, 24_000, 0xFFFF_FFFFu32, 0xFFFF_FFFFu32)?;
             let header = std::mem::take(&mut wav_buffer);
             tx.send(Ok(Bytes::from(header))).await?;
+
+            let mut chunk_buf = bytes::BytesMut::with_capacity(8 * 1024);
+            let mut chunk_buf_spare = bytes::BytesMut::with_capacity(8 * 1024);
+
             while let Some(data) = out_rx.recv().await {
-                wav_buffer.clear();
                 pcm_buf.resize(data.len() / std::mem::size_of::<f32>(), 0.0);
                 {
                     use byteorder::ByteOrder;
                     byteorder::LittleEndian::read_f32_into(&data, &mut pcm_buf);
                 }
-                moshi::wav::write_pcm_in_wav(&mut wav_buffer, &pcm_buf)?;
-                let chunk = std::mem::take(&mut wav_buffer);
-                tx.send(Ok(Bytes::from(chunk))).await?;
+
+                chunk_buf.clear();
+                {
+                    let mut w = (&mut chunk_buf).writer();
+                    moshi::wav::write_pcm_in_wav(&mut w, &pcm_buf)?;
+                }
+
+                std::mem::swap(&mut chunk_buf, &mut chunk_buf_spare);
+                let chunk = chunk_buf_spare.split().freeze();
+                tx.send(Ok(chunk)).await?;
             }
 
             // We want in_tx to stay open while the send_loop is running, so we capture it
@@ -538,9 +550,7 @@ impl M {
         Ok(ReceiverStream::new(rx))
     }
 
-    pub async fn handle_socket(&self, socket: ws::WebSocket, query: Query) -> Result<()> {
-        use futures_util::{SinkExt, StreamExt};
-
+    // ... (rest of the code remains the same)
         tracing::debug!(?query, "py query");
         metrics::CONNECT.inc();
 

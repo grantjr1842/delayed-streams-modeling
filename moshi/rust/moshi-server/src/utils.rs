@@ -280,8 +280,8 @@ pub fn model_dtype(over: Option<&str>, dev: &Device) -> Result<DType> {
 
 /// Reserved VRAM for CUDA runtime, driver overhead, and safety margin.
 /// This accounts for CUDA context, kernel launches, and other system allocations.
-/// Default set to 2048MB (2GB) to balance safety with maximizing batch size on 8GB cards.
-pub const DEFAULT_VRAM_RESERVED_MB: u64 = 2048;
+/// Default set to 2560MB (2.5GB) to reduce the risk of OOM on 8GB cards.
+pub const DEFAULT_VRAM_RESERVED_MB: u64 = 2560;
 
 /// Default per-batch-item memory cost in MB.
 /// This covers activations, KV cache, and intermediate tensors per concurrent stream.

@@ -56,8 +56,20 @@ pub fn write_wav_header<W: Write>(
 }
 
 pub fn write_pcm_in_wav<W: Write, S: Sample>(w: &mut W, samples: &[S]) -> std::io::Result<usize> {
+    const BUF_SIZE: usize = 8 * 1024;
+    let mut buf = [0u8; BUF_SIZE];
+    let mut offset = 0usize;
     for sample in samples {
-        w.write_all(&sample.to_i16().to_le_bytes())?
+        let bytes = sample.to_i16().to_le_bytes();
+        if offset + bytes.len() > buf.len() {
+            w.write_all(&buf[..offset])?;
+            offset = 0;
+        }
+        buf[offset..offset + 2].copy_from_slice(&bytes);
+        offset += 2;
+    }
+    if offset > 0 {
+        w.write_all(&buf[..offset])?;
     }
     Ok(samples.len() * std::mem::size_of::<i16>())
 }

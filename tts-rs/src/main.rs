@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use tokio_tungstenite::tungstenite::Message;
 
 const SAMPLE_RATE: u32 = 24000;
@@ -91,12 +91,18 @@ fn output_path_for_run(base: &str, run_idx: usize, runs: usize) -> String {
         None => format!("{stem}_run{run_idx}"),
     };
     match parent {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(file_name).to_string_lossy().to_string(),
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            parent.join(file_name).to_string_lossy().to_string()
+        }
         _ => file_name,
     }
 }
 
-async fn run_tts_once(args: &Args, text: &str, run_idx: usize) -> Result<(BenchResult, Option<Vec<f32>>)> {
+async fn run_tts_once(
+    args: &Args,
+    text: &str,
+    run_idx: usize,
+) -> Result<(BenchResult, Option<Vec<f32>>)> {
     let ws_url = build_ws_url(args)?;
     if !args.json {
         println!("Connecting to: {}", redact_ws_url(&ws_url));
@@ -120,31 +126,37 @@ async fn run_tts_once(args: &Args, text: &str, run_idx: usize) -> Result<(BenchR
     let receive_task = tokio::spawn(async move {
         while let Some(msg) = read.next().await {
             match msg {
-                Ok(Message::Binary(data)) => {
-                    match rmp_serde::from_slice::<InMsg>(&data) {
-                        Ok(InMsg::Ready) => {
-                            if let Some(tx) = ready_tx.take() {
-                                let _ = tx.send(start.elapsed().as_secs_f64() * 1000.0);
-                            }
-                        }
-                        Ok(InMsg::Audio { pcm }) => {
-                            if let Some(tx) = ttfb_tx.take() {
-                                let _ = tx.send(start.elapsed().as_secs_f64() * 1000.0);
-                            }
-                            if audio_tx.send(pcm).is_err() {
-                                break;
-                            }
-                        }
-                        Ok(InMsg::Text { .. }) => {}
-                        Ok(InMsg::Error { message }) => {
-                            return Err(anyhow::anyhow!("Server error: {message}"));
-                        }
-                        Ok(InMsg::OggOpus { .. }) => {}
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("Failed to decode message: {e}"));
+                Ok(Message::Binary(data)) => match rmp_serde::from_slice::<InMsg>(&data) {
+                    Ok(InMsg::Ready) => {
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(start.elapsed().as_secs_f64() * 1000.0);
                         }
                     }
-                }
+                    Ok(InMsg::Audio { pcm }) => {
+                        if let Some(tx) = ttfb_tx.take() {
+                            let _ = tx.send(start.elapsed().as_secs_f64() * 1000.0);
+                        }
+                        if audio_tx.send(pcm).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(InMsg::Text {
+                        text,
+                        start_s,
+                        stop_s,
+                    }) => {
+                        let _ = (text, start_s, stop_s);
+                    }
+                    Ok(InMsg::Error { message }) => {
+                        return Err(anyhow::anyhow!("Server error: {message}"));
+                    }
+                    Ok(InMsg::OggOpus { data }) => {
+                        let _ = data;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to decode message: {e}"));
+                    }
+                },
                 Ok(Message::Close(_)) => break,
                 Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
                 Ok(_) => {}
@@ -172,8 +184,8 @@ async fn run_tts_once(args: &Args, text: &str, run_idx: usize) -> Result<(BenchR
     let total_ms = start.elapsed().as_secs_f64() * 1000.0;
     let audio_seconds = all_samples.len() as f64 / SAMPLE_RATE as f64;
 
-    let tt_ready_ms = ready_rx.ok();
-    let ttfb_ms = ttfb_rx.ok();
+    let tt_ready_ms = ready_rx.await.ok();
+    let ttfb_ms = ttfb_rx.await.ok();
     let wall_seconds = ttfb_ms.map(|ttfb| (total_ms - ttfb) / 1000.0);
     let (rtf, x_real_time) = match (wall_seconds, audio_seconds > 0.0) {
         (Some(wall_s), true) if wall_s > 0.0 => {
@@ -209,16 +221,26 @@ async fn run_tts_once(args: &Args, text: &str, run_idx: usize) -> Result<(BenchR
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type")]
 enum InMsg {
-    Audio { pcm: Vec<f32> },
-    Text { text: String, start_s: f64, stop_s: f64 },
-    OggOpus { data: Vec<u8> },
-    Error { message: String },
+    Audio {
+        pcm: Vec<f32>,
+    },
+    Text {
+        text: String,
+        start_s: f64,
+        stop_s: f64,
+    },
+    OggOpus {
+        data: Vec<u8>,
+    },
+    Error {
+        message: String,
+    },
     Ready,
 }
 
 fn build_ws_url(args: &Args) -> Result<url::Url> {
     let mut url = url::Url::parse(&args.url)?;
-    
+
     // Ensure path ends with /api/tts_streaming
     let path = url.path();
     if !path.ends_with("/api/tts_streaming") {
@@ -267,7 +289,9 @@ fn read_input_lines(input: &str) -> Result<Vec<String>> {
     } else {
         let file = std::fs::File::open(input)
             .with_context(|| format!("Failed to open input file: {}", input))?;
-        std::io::BufReader::new(file).lines().collect::<std::io::Result<Vec<_>>>()?
+        std::io::BufReader::new(file)
+            .lines()
+            .collect::<std::io::Result<Vec<_>>>()?
     };
     Ok(lines)
 }
@@ -320,14 +344,19 @@ async fn run_tts_client(args: Args) -> Result<()> {
                     println!("{}", serde_json::to_string(&res)?);
                     continue;
                 }
-                return Err(anyhow::anyhow!(res.error.unwrap_or_else(|| "unknown".into())));
+                return Err(anyhow::anyhow!(
+                    res.error.unwrap_or_else(|| "unknown".into())
+                ));
             }
         };
 
         if args.json {
             println!("{}", serde_json::to_string(&result)?);
         } else {
-            println!("run {run_idx}/{}: ttfb_ms={:?} total_ms={:?} audio_s={:.2} rtf={:?}", args.runs, result.ttfb_ms, result.total_ms, result.audio_seconds, result.rtf);
+            println!(
+                "run {run_idx}/{}: ttfb_ms={:?} total_ms={:?} audio_s={:.2} rtf={:?}",
+                args.runs, result.ttfb_ms, result.total_ms, result.audio_seconds, result.rtf
+            );
         }
 
         if let Some(samples) = samples {

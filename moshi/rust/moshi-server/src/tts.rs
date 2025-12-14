@@ -419,8 +419,18 @@ impl Model {
             let mut inserted_bos = false;
             while let Some(msg) = receiver.next().await {
                 let msg = match msg? {
-                    ws::Message::Text(x) => x,
+                    ws::Message::Text(x) => {
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::TTS_WS_IN_MESSAGES.inc();
+                            crate::metrics::stream::TTS_WS_IN_BYTES.inc_by(x.len() as u64);
+                        }
+                        x
+                    }
                     ws::Message::Binary(x) => {
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::TTS_WS_IN_MESSAGES.inc();
+                            crate::metrics::stream::TTS_WS_IN_BYTES.inc_by(x.len() as u64);
+                        }
                         // End of stream, we do not exit the loop so as not to close
                         // the connection.
                         if x.as_ref() == b"\0" {
@@ -435,7 +445,6 @@ impl Model {
                     ws::Message::Close(_) => break,
                 };
 
-                let msg: String = msg.to_string();
                 for word in msg.split(' ') {
                     if word.is_empty() {
                         continue;
@@ -559,7 +568,13 @@ impl Model {
                 // The recv method is cancel-safe so can be wrapped in a timeout.
                 let msg = timeout(Duration::from_secs(10), out_rx.recv()).await;
                 let msg = match msg {
-                    Ok(Some(msg)) => ws::Message::binary(msg),
+                    Ok(Some(msg)) => {
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::TTS_WS_OUT_MESSAGES.inc();
+                            crate::metrics::stream::TTS_WS_OUT_BYTES.inc_by(msg.len() as u64);
+                        }
+                        ws::Message::binary(msg)
+                    }
                     Ok(None) => break,
                     Err(_) => ws::Message::Ping(vec![].into()),
                 };

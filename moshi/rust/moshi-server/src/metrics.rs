@@ -5,9 +5,9 @@
 use lazy_static::lazy_static;
 use prometheus::{
     histogram_opts, labels, opts, register_counter, register_counter_vec, register_gauge,
-    register_histogram,
+    register_histogram, register_int_counter,
 };
-use prometheus::{Counter, CounterVec, Gauge, Histogram};
+use prometheus::{Counter, CounterVec, Gauge, Histogram, IntCounter};
 
 pub mod asr {
     use super::*;
@@ -35,6 +35,71 @@ pub mod asr {
             "Number of open channels (users currently connected).",
             labels! {"handler" => "all",}
         ))
+        .unwrap();
+    }
+}
+
+pub mod stream {
+    use super::*;
+
+    fn parse_env_bool(key: &str) -> bool {
+        match std::env::var(key) {
+            Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"),
+            Err(_) => false,
+        }
+    }
+
+    #[inline(always)]
+    pub fn enabled() -> bool {
+        *ENABLED
+    }
+
+    lazy_static! {
+        pub static ref ENABLED: bool = parse_env_bool("MOSHI_STREAM_METRICS");
+        pub static ref ASR_WS_IN_BYTES: IntCounter =
+            register_int_counter!("asr_ws_in_bytes_total", "Total ASR websocket bytes in.")
+                .unwrap();
+        pub static ref ASR_WS_IN_MESSAGES: IntCounter =
+            register_int_counter!("asr_ws_in_messages_total", "Total ASR websocket messages in.")
+                .unwrap();
+        pub static ref ASR_WS_OUT_BYTES: IntCounter =
+            register_int_counter!("asr_ws_out_bytes_total", "Total ASR websocket bytes out.")
+                .unwrap();
+        pub static ref ASR_WS_OUT_MESSAGES: IntCounter =
+            register_int_counter!("asr_ws_out_messages_total", "Total ASR websocket messages out.")
+                .unwrap();
+        pub static ref LM_WS_IN_BYTES: IntCounter =
+            register_int_counter!("lm_ws_in_bytes_total", "Total LM websocket bytes in.").unwrap();
+        pub static ref LM_WS_IN_MESSAGES: IntCounter =
+            register_int_counter!("lm_ws_in_messages_total", "Total LM websocket messages in.")
+                .unwrap();
+        pub static ref LM_WS_OUT_BYTES: IntCounter =
+            register_int_counter!("lm_ws_out_bytes_total", "Total LM websocket bytes out.")
+                .unwrap();
+        pub static ref LM_WS_OUT_MESSAGES: IntCounter =
+            register_int_counter!("lm_ws_out_messages_total", "Total LM websocket messages out.")
+                .unwrap();
+        pub static ref TTS_WS_IN_BYTES: IntCounter =
+            register_int_counter!("tts_ws_in_bytes_total", "Total TTS websocket bytes in.")
+                .unwrap();
+        pub static ref TTS_WS_IN_MESSAGES: IntCounter =
+            register_int_counter!("tts_ws_in_messages_total", "Total TTS websocket messages in.")
+                .unwrap();
+        pub static ref TTS_WS_OUT_BYTES: IntCounter =
+            register_int_counter!("tts_ws_out_bytes_total", "Total TTS websocket bytes out.")
+                .unwrap();
+        pub static ref TTS_WS_OUT_MESSAGES: IntCounter =
+            register_int_counter!("tts_ws_out_messages_total", "Total TTS websocket messages out.")
+                .unwrap();
+        pub static ref PY_HTTP_WAV_OUT_BYTES: IntCounter = register_int_counter!(
+            "py_http_wav_out_bytes_total",
+            "Total py-module HTTP WAV bytes out."
+        )
+        .unwrap();
+        pub static ref PY_HTTP_WAV_OUT_CHUNKS: IntCounter = register_int_counter!(
+            "py_http_wav_out_chunks_total",
+            "Total py-module HTTP WAV chunks out."
+        )
         .unwrap();
     }
 }

@@ -136,7 +136,13 @@ impl Asr {
             let mut markers = VecDeque::new();
             while let Some(msg) = receiver.next().await {
                 let msg = match msg? {
-                    ws::Message::Binary(x) => x,
+                    ws::Message::Binary(x) => {
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::ASR_WS_IN_MESSAGES.inc();
+                            crate::metrics::stream::ASR_WS_IN_BYTES.inc_by(x.len() as u64);
+                        }
+                        x
+                    }
                     // ping messages are automatically answered by tokio-tungstenite as long as
                     // the connection is read from.
                     ws::Message::Ping(_) | ws::Message::Pong(_) | ws::Message::Text(_) => continue,
@@ -220,6 +226,10 @@ impl Asr {
             Ok::<(), anyhow::Error>(())
         });
         let send_loop = crate::utils::spawn("send_loop", async move {
+            use bytes::BufMut;
+
+            let mut chunk_buf = bytes::BytesMut::with_capacity(8 * 1024);
+            let mut chunk_buf_spare = bytes::BytesMut::with_capacity(8 * 1024);
             loop {
                 // The recv method is cancel-safe so can be wrapped in a timeout.
                 let msg = timeout(Duration::from_secs(10), rx.recv()).await;
@@ -227,13 +237,22 @@ impl Asr {
                     Ok(None) => break,
                     Err(_) => ws::Message::Ping(vec![].into()),
                     Ok(Some(msg)) => {
-                        let mut buf = vec![];
-                        msg.serialize(
-                            &mut rmp_serde::Serializer::new(&mut buf)
-                                .with_human_readable()
-                                .with_struct_map(),
-                        )?;
-                        ws::Message::Binary(buf.into())
+                        chunk_buf.clear();
+                        {
+                            let mut w = (&mut chunk_buf).writer();
+                            msg.serialize(
+                                &mut rmp_serde::Serializer::new(&mut w)
+                                    .with_human_readable()
+                                    .with_struct_map(),
+                            )?;
+                        }
+                        std::mem::swap(&mut chunk_buf, &mut chunk_buf_spare);
+                        let bytes = chunk_buf_spare.split().freeze();
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::ASR_WS_OUT_MESSAGES.inc();
+                            crate::metrics::stream::ASR_WS_OUT_BYTES.inc_by(bytes.len() as u64);
+                        }
+                        ws::Message::Binary(bytes)
                     }
                 };
                 sender.send(msg).await?;

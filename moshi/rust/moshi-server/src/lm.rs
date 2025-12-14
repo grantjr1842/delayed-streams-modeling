@@ -103,6 +103,10 @@ impl Lm {
                         if b.is_empty() {
                             continue;
                         }
+                        if crate::metrics::stream::enabled() {
+                            crate::metrics::stream::LM_WS_IN_MESSAGES.inc();
+                            crate::metrics::stream::LM_WS_IN_BYTES.inc_by(b.len() as u64);
+                        }
                         let msg_type = MsgType::from_u8(b[0])?;
                         let payload = b[1..].to_vec();
                         (msg_type, payload)
@@ -207,6 +211,8 @@ impl Lm {
             use futures_util::SinkExt;
 
             let mut encoder = ogg_opus::Encoder::new(24000)?;
+            let mut out_buf = bytes::BytesMut::with_capacity(8 * 1024);
+            let mut out_buf_spare = bytes::BytesMut::with_capacity(8 * 1024);
             let mut handshake = vec![MsgType::Handshake.to_u8()];
             handshake.resize(9, 0u8);
             if let Err(err) = ws_sender.send(ws::Message::binary(handshake)).await {
@@ -214,19 +220,40 @@ impl Lm {
                 return Ok(());
             }
             {
-                let msg: Vec<u8> = [&[MsgType::Audio.to_u8()], encoder.header_data()].concat();
-                let msg = ws::Message::Binary(msg.into());
+                out_buf.clear();
+                out_buf.extend_from_slice(&[MsgType::Audio.to_u8()]);
+                out_buf.extend_from_slice(encoder.header_data());
+
+                std::mem::swap(&mut out_buf, &mut out_buf_spare);
+                let bytes = out_buf_spare.split().freeze();
+                if crate::metrics::stream::enabled() {
+                    crate::metrics::stream::LM_WS_OUT_MESSAGES.inc();
+                    crate::metrics::stream::LM_WS_OUT_BYTES.inc_by(bytes.len() as u64);
+                }
+                let msg = ws::Message::Binary(bytes);
                 ws_sender.send(msg).await?;
             }
             while let Some(evt) = out_rx.recv().await {
-                let msg: Vec<u8> = match evt {
+                out_buf.clear();
+                match evt {
                     WsEvent::Pcm(pcm) => {
                         let ogg = encoder.encode_page(&pcm)?;
-                        [&[MsgType::Audio.to_u8()], ogg.as_slice()].concat()
+                        out_buf.extend_from_slice(&[MsgType::Audio.to_u8()]);
+                        out_buf.extend_from_slice(ogg.as_slice());
                     }
-                    WsEvent::Text(text) => [&[MsgType::Text.to_u8()], text.as_bytes()].concat(),
-                };
-                let msg = ws::Message::Binary(msg.into());
+                    WsEvent::Text(text) => {
+                        out_buf.extend_from_slice(&[MsgType::Text.to_u8()]);
+                        out_buf.extend_from_slice(text.as_bytes());
+                    }
+                }
+
+                std::mem::swap(&mut out_buf, &mut out_buf_spare);
+                let bytes = out_buf_spare.split().freeze();
+                if crate::metrics::stream::enabled() {
+                    crate::metrics::stream::LM_WS_OUT_MESSAGES.inc();
+                    crate::metrics::stream::LM_WS_OUT_BYTES.inc_by(bytes.len() as u64);
+                }
+                let msg = ws::Message::Binary(bytes);
                 ws_sender.send(msg).await?
             }
             Ok::<_, anyhow::Error>(())

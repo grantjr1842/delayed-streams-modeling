@@ -520,6 +520,10 @@ impl M {
             let mut pcm_buf: Vec<f32> = Vec::new();
             moshi::wav::write_wav_header(&mut wav_buffer, 24_000, 0xFFFF_FFFFu32, 0xFFFF_FFFFu32)?;
             let header = std::mem::take(&mut wav_buffer);
+            if crate::metrics::stream::enabled() {
+                crate::metrics::stream::PY_HTTP_WAV_OUT_CHUNKS.inc();
+                crate::metrics::stream::PY_HTTP_WAV_OUT_BYTES.inc_by(header.len() as u64);
+            }
             tx.send(Ok(Bytes::from(header))).await?;
 
             let mut chunk_buf = bytes::BytesMut::with_capacity(8 * 1024);
@@ -540,6 +544,10 @@ impl M {
 
                 std::mem::swap(&mut chunk_buf, &mut chunk_buf_spare);
                 let chunk = chunk_buf_spare.split().freeze();
+                if crate::metrics::stream::enabled() {
+                    crate::metrics::stream::PY_HTTP_WAV_OUT_CHUNKS.inc();
+                    crate::metrics::stream::PY_HTTP_WAV_OUT_BYTES.inc_by(chunk.len() as u64);
+                }
                 tx.send(Ok(chunk)).await?;
             }
 

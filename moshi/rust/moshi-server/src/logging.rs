@@ -32,10 +32,7 @@ impl std::str::FromStr for LogStyle {
             "compact" => Ok(LogStyle::Compact),
             "pretty" => Ok(LogStyle::Pretty),
             "verbose" => Ok(LogStyle::Verbose),
-            _ => Err(format!(
-                "Invalid log style '{}'. Expected: compact, pretty, or verbose",
-                s
-            )),
+            _ => Err(format!("Invalid log style '{}'. Expected: compact, pretty, or verbose", s)),
         }
     }
 }
@@ -145,7 +142,9 @@ where
                 Level::DEBUG => write!(writer, "{}", format!("{} {}", icon, level_str).blue())?,
                 Level::INFO => write!(writer, "{}", format!("{} {}", icon, level_str).green())?,
                 Level::WARN => write!(writer, "{}", format!("{} {}", icon, level_str).yellow())?,
-                Level::ERROR => write!(writer, "{}", format!("{} {}", icon, level_str).red().bold())?,
+                Level::ERROR => {
+                    write!(writer, "{}", format!("{} {}", icon, level_str).red().bold())?
+                }
             }
         } else {
             write!(writer, "{} {}", icon, level_str)?;
@@ -205,10 +204,7 @@ pub struct CompactFormatter<T> {
 impl<T> CompactFormatter<T> {
     /// Create a new compact formatter
     pub fn new(timer: T) -> Self {
-        Self {
-            timer,
-            use_ansi: std::io::stdout().is_terminal(),
-        }
+        Self { timer, use_ansi: std::io::stdout().is_terminal() }
     }
 
     /// Set whether to use ANSI colors
@@ -263,6 +259,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_log_style_from_str() {

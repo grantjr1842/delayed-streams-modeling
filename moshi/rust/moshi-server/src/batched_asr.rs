@@ -78,17 +78,21 @@ impl Channel {
         Ok(Self { id: ChannelId::new(), in_rx, out_tx, data: VecDeque::new(), decoder, steps: 0 })
     }
 
-    fn extend_data(&mut self, mut pcm: Vec<f32>) -> Option<Vec<f32>> {
+    fn extend_data(&mut self, pcm: &[f32], out_pcm: &mut [f32]) -> bool {
+        debug_assert_eq!(out_pcm.len(), FRAME_SIZE);
         if self.data.is_empty() && pcm.len() >= FRAME_SIZE {
+            out_pcm.copy_from_slice(&pcm[..FRAME_SIZE]);
             self.data.extend(&pcm[FRAME_SIZE..]);
-            pcm.truncate(FRAME_SIZE);
-            Some(pcm)
+            true
         } else {
-            self.data.extend(&pcm);
+            self.data.extend(pcm);
             if self.data.len() >= FRAME_SIZE {
-                Some(self.data.drain(..FRAME_SIZE).collect())
+                let cont = self.data.make_contiguous();
+                out_pcm.copy_from_slice(&cont[..FRAME_SIZE]);
+                self.data.drain(..FRAME_SIZE);
+                true
             } else {
-                None
+                false
             }
         }
     }
@@ -367,8 +371,7 @@ impl BatchedAsrInner {
                             None
                         }
                         Ok(InMsg::Audio { pcm }) => {
-                            if let Some(bpcm) = c.extend_data(pcm) {
-                                out_pcm.copy_from_slice(&bpcm);
+                            if c.extend_data(&pcm, out_pcm) {
                                 c.steps += 1;
                                 *mask = true;
                             }
@@ -377,8 +380,7 @@ impl BatchedAsrInner {
                         Ok(InMsg::Ping) => None,
                         Err(TryRecvError::Empty) => {
                             // Even if we haven't received new data, we process the existing one.
-                            if let Some(bpcm) = c.extend_data(vec![]) {
-                                out_pcm.copy_from_slice(&bpcm);
+                            if c.extend_data(&[], out_pcm) {
                                 c.steps += 1;
                                 *mask = true;
                             }

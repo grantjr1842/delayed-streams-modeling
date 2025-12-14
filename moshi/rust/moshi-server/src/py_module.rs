@@ -550,7 +550,9 @@ impl M {
         Ok(ReceiverStream::new(rx))
     }
 
-    // ... (rest of the code remains the same)
+    pub async fn handle_socket(&self, socket: ws::WebSocket, query: Query) -> Result<()> {
+        use futures_util::{SinkExt, StreamExt};
+
         tracing::debug!(?query, "py query");
         metrics::CONNECT.inc();
 

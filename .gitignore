@@ -207,3 +207,6 @@ assets/
 
 # Windsurf Workflow artifacts
 .agent/
+
+# Visual Studio Code
+.vscode/

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from functools import wraps
 import inspect
 import os
+import sys
 import typing as tp
 
 import torch
@@ -40,16 +41,33 @@ def torch_compile_lazy(fun):
     """
     if os.environ.get("NO_TORCH_COMPILE"):
         return fun
+    if not hasattr(torch, "compile"):
+        return fun
+    if hasattr(torch, "_dynamo") and hasattr(torch._dynamo, "is_dynamo_supported"):
+        if not torch._dynamo.is_dynamo_supported():
+            return fun
     fun_compiled = None
+    compile_attempted = False
 
     @wraps(fun)
     def _wrapped(*args, **kwargs):
         nonlocal fun_compiled
+        nonlocal compile_attempted
         if _compile_disabled:
             return fun(*args, **kwargs)
-        if fun_compiled is None:
-            fun_compiled = torch.compile(fun)
-        return fun_compiled(*args, **kwargs)
+        if fun_compiled is not None:
+            return fun_compiled(*args, **kwargs)
+        if compile_attempted:
+            return fun(*args, **kwargs)
+        compile_attempted = True
+        try:
+            compiled = torch.compile(fun)
+            out = compiled(*args, **kwargs)
+        except Exception:
+            fun_compiled = fun
+            return fun(*args, **kwargs)
+        fun_compiled = compiled
+        return out
 
     return _wrapped
 

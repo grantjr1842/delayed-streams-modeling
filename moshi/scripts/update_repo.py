@@ -16,10 +16,17 @@ from moshi.models import loaders
 from moshi.modules.transformer import quantize_transformer
 
 
+def _tmp_dir() -> Path:
+    tmp_dir = Path(__file__).resolve().parents[2] / "tmp" / "moshi"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    return tmp_dir
+
+
 def get_api():
     token = input("Write token? ").strip()
     api = HfApi(token=token)
     return api
+
 
 def main():
     parser = argparse.ArgumentParser('update_repo')
@@ -68,7 +75,7 @@ def main():
         changes = True
 
     if changes:
-        with tempfile.NamedTemporaryFile(mode='w') as file:
+        with tempfile.NamedTemporaryFile(mode='w', dir=_tmp_dir()) as file:
             json.dump(new_config, file, indent=2)
             file.flush()
             api.upload_file(

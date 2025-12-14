@@ -643,7 +643,7 @@ impl BatchedAsr {
             // - The long timeout handles the case where the client does not send valid data for a
             // long time.
             let mut last_message_received = std::time::Instant::now();
-            let short_timeout_duration = SEND_PING_EVERY * 2;
+            let short_timeout_duration = SEND_PING_EVERY * 6;
             let long_timeout_duration = std::time::Duration::from_secs(120);
             loop {
                 use ws::Message;

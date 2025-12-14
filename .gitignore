@@ -198,5 +198,12 @@ assets/fp16/stt-1b-en_fr-candle.fp16.safetensors
 # Logs folders
 logs/
 
+/tmp/
+/tmp_*
+/letsencrypt/
+
 # Assets folder
 assets/
+
+# Windsurf Workflow artifacts
+.agent/

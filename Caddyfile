@@ -19,7 +19,6 @@
 }
 
 transcribe.fullen.dev {
-	encode zstd gzip
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
@@ -61,9 +60,19 @@ stt.fullen.dev {
 	# 	- /api/modules_info (GET - modules info)
 	# 	- /metrics (GET - Prometheus metrics)
 	# 	- /* (Static files - client app)
-	reverse_proxy localhost:8080 {
-		# Explicit WebSocket header passthrough for reliable streaming
-		header_up Connection {http.request.header.Connection}
-		header_up Upgrade {http.request.header.Upgrade}
+	reverse_proxy 127.0.0.1:8080 {
+		# Let Caddy handle WebSocket upgrade automatically (don't override headers)
+		
+		# WebSocket streaming: disable buffering
+		flush_interval -1
+		
+		# Robust stream timeout (1 hour) to prevent disconnects
+		stream_timeout 3600s
+		
+		# Explicit transport timeouts
+		transport http {
+			read_timeout 3600s
+			write_timeout 3600s
+		}
 	}
 }

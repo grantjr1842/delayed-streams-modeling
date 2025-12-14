@@ -590,7 +590,7 @@ impl M {
             // - The short timeout handles the case where the client does not answer the regular pings.
             // - The long timeout handles the case where the client does not send valid data for a
             // long time.
-            let short_timeout_duration = SEND_PING_EVERY * 3;
+            let short_timeout_duration = SEND_PING_EVERY * 6;
             let long_timeout_duration = std::time::Duration::from_secs(120);
             let mut last_message_received = std::time::Instant::now();
             let mut receiver = receiver;

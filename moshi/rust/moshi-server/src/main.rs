@@ -99,6 +99,8 @@ pub struct TtsConfig {
     pub model: moshi::lm::Config,
     pub generation: moshi::tts_streaming::Config,
     #[serde(default)]
+    pub log_tokens: bool,
+    #[serde(default)]
     pub dtype_override: Option<String>,
 }
 
@@ -929,7 +931,9 @@ async fn main_() -> Result<()> {
                             ModuleConfig::Tts { path, .. } => ("TTS", path.clone()),
                             ModuleConfig::Asr { path, .. } => ("ASR", path.clone()),
                             ModuleConfig::BatchedAsr { path, .. } => ("BatchedASR", path.clone()),
-                            ModuleConfig::PyBatchedAsr { path, .. } => ("PyBatchedASR", path.clone()),
+                            ModuleConfig::PyBatchedAsr { path, .. } => {
+                                ("PyBatchedASR", path.clone())
+                            }
                             ModuleConfig::Mimi { send_path, .. } => ("Mimi", send_path.clone()),
                             ModuleConfig::Lm { path, .. } => ("LM", path.clone()),
                             ModuleConfig::Py { path, .. } => ("Py", path.clone()),
@@ -1139,7 +1143,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         headers: axum::http::HeaderMap,
         req: axum::Json<TtsQuery>,
     ) -> utils::AxumResult<Response> {
-        tracing::info!("handling tts query {req:?}");
+        tracing::debug!("handling tts query {req:?}");
         match auth::check_with_user(&headers, None) {
             Ok(claims) => {
                 tracing::debug!(user_id = %claims.user.id, session_id = %claims.session.id, "authenticated via JWT");
@@ -1150,7 +1154,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
             let _guard = state.0 .0.mutex.lock().await;
             state.0 .0.run(&req)?
         };
-        tracing::info!("ok {}", wav.len());
+        tracing::debug!("ok {}", wav.len());
         if req.return_timestamps.unwrap_or(false) {
             let data =
                 TtsResponse { wav: base64::prelude::BASE64_STANDARD.encode(wav), transcript };
@@ -1173,13 +1177,12 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         state: axum::extract::State<(Arc<tts::Model>, SharedState)>,
         req: axum::extract::Query<TtsStreamingQuery>,
     ) -> utils::AxumResult<Response> {
-        tracing::info!("handling tts streaming query {req:?}");
+        tracing::debug!("handling tts streaming query {req:?}");
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         if let Some(ip) = &addr {
             tracing::Span::current().record("client_ip", ip);
         }
-        let auth_result =
-            auth::check_with_user(&headers, req.token.as_deref());
+        let auth_result = auth::check_with_user(&headers, req.token.as_deref());
 
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
@@ -1499,8 +1502,7 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
             tracing::Span::current().record("client_ip", ip);
         }
         tracing::info!("handling asr-streaming query");
-        let auth_result =
-            auth::check(&headers, req.token.as_deref());
+        let auth_result = auth::check(&headers, req.token.as_deref());
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1576,8 +1578,7 @@ fn batched_asr_router(
             tracing::Span::current().record("client_ip", ip);
         }
         tracing::info!("handling batched asr-streaming query");
-        let auth_result =
-            auth::check(&headers, req.token.as_deref());
+        let auth_result = auth::check(&headers, req.token.as_deref());
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
@@ -1667,8 +1668,7 @@ fn py_router(s: Arc<py_module::M>, path: &str, ss: &SharedState) -> axum::Router
     ) -> utils::AxumResult<Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py streaming query");
-        let auth_result =
-            auth::check(&headers, req.token.as_deref());
+        let auth_result = auth::check(&headers, req.token.as_deref());
 
         let py_query = req.0.clone();
         let py = state.0 .0.clone();
@@ -1735,8 +1735,7 @@ fn py_asr_router(s: Arc<py_basr_module::M>, path: &str, ss: &SharedState) -> axu
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling py asr streaming query");
-        let auth_result =
-            auth::check(&headers, req.token.as_deref());
+        let auth_result = auth::check(&headers, req.token.as_deref());
 
         let py_asr_query = req.0.clone();
         let py_asr = state.0 .0.clone();
@@ -1841,8 +1840,7 @@ fn mimi_router(
     ) -> utils::AxumResult<axum::response::Response> {
         let addr = headers.get("X-Real-IP").and_then(|v| v.to_str().ok().map(|v| v.to_string()));
         tracing::info!(addr, "handling mimi-streaming send query");
-        let auth_result =
-            auth::check(&headers, req.token.as_deref());
+        let auth_result = auth::check(&headers, req.token.as_deref());
 
         let room_id = match headers.get(ROOM_ID_HEADER) {
             Some(v) => v.to_str().ok().map(|v| v.to_string()),

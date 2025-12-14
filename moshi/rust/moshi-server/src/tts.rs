@@ -21,12 +21,50 @@ pub struct Model {
     text_tokenizer: std::sync::Arc<sentencepiece::SentencePieceProcessor>,
     speaker_encoder: moshi::tts_streaming::SpeakerEncoder,
     ca_srcs: std::collections::HashMap<String, Tensor>,
+    dynamic_ca_srcs: std::sync::Mutex<DynamicVoiceCache>,
     tts_config: moshi::tts_streaming::Config,
     instance_name: String,
     voice_dir: std::path::PathBuf,
     log_dir: std::path::PathBuf,
+    log_tokens: bool,
     // Dummy way to ensure that only a single inference can happen.
     pub(crate) mutex: tokio::sync::Mutex<()>,
+}
+
+struct DynamicVoiceCache {
+    order: std::collections::VecDeque<String>,
+    map: std::collections::HashMap<String, Tensor>,
+    max_entries: usize,
+}
+
+impl DynamicVoiceCache {
+    fn new(max_entries: usize) -> Self {
+        Self {
+            order: std::collections::VecDeque::new(),
+            map: std::collections::HashMap::new(),
+            max_entries,
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Tensor> {
+        self.map.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: String, value: Tensor) {
+        if self.map.contains_key(&key) {
+            self.map.insert(key, value);
+            return;
+        }
+        self.order.push_back(key.clone());
+        self.map.insert(key, value);
+        while self.map.len() > self.max_entries {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 pub enum Encoder {
@@ -126,6 +164,12 @@ pub enum OutMsg {
     Ready,
 }
 
+#[derive(serde::Serialize)]
+#[serde(tag = "type")]
+enum OutMsgRef<'a> {
+    Audio { pcm: &'a [f32] },
+}
+
 impl Encoder {
     pub fn new(format: crate::StreamingOutput) -> Result<Self> {
         match format {
@@ -193,12 +237,12 @@ impl Encoder {
         Ok(buf)
     }
 
-    pub fn encode(&mut self, pcm: Vec<f32>) -> Result<Vec<u8>> {
+    pub fn encode(&mut self, pcm: &[f32]) -> Result<Vec<u8>> {
         use serde::Serialize;
         let buf = match self {
-            Self::OggOpus(oo) => oo.encode_page(&pcm)?,
+            Self::OggOpus(oo) => oo.encode_page(pcm)?,
             Self::OggOpusMessagePack(oo) => {
-                let data = oo.encode_page(&pcm)?;
+                let data = oo.encode_page(pcm)?;
                 let mut buf = vec![];
                 OutMsg::OggOpus { data }.serialize(
                     &mut rmp_serde::Serializer::new(&mut buf)
@@ -209,7 +253,7 @@ impl Encoder {
             }
             Self::PcmMessagePack => {
                 let mut buf = vec![];
-                OutMsg::Audio { pcm }.serialize(
+                OutMsgRef::Audio { pcm }.serialize(
                     &mut rmp_serde::Serializer::new(&mut buf)
                         .with_human_readable()
                         .with_struct_map(),
@@ -218,8 +262,8 @@ impl Encoder {
             }
             Self::Pcm => {
                 use byteorder::ByteOrder;
-                let mut buf = vec![0u8; std::mem::size_of_val(pcm.as_slice())];
-                byteorder::LittleEndian::write_f32_into(&pcm, &mut buf);
+                let mut buf = vec![0u8; std::mem::size_of_val(pcm)];
+                byteorder::LittleEndian::write_f32_into(pcm, &mut buf);
                 buf
             }
         };
@@ -289,16 +333,20 @@ impl Model {
             model_config,
             moshi::nn::MaybeQuantizedVarBuilder::Real(vb_lm),
         )?;
+        let voice_dir = std::fs::canonicalize(&tts.voice_dir)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&tts.voice_dir));
         Ok(Self {
             lm,
             audio_tokenizer,
             text_tokenizer: std::sync::Arc::new(text_tokenizer),
             speaker_encoder,
             ca_srcs,
+            dynamic_ca_srcs: std::sync::Mutex::new(DynamicVoiceCache::new(16)),
             tts_config: tts.generation.clone(),
             instance_name: config.instance_name.to_string(),
             log_dir: config.log_dir.clone().into(),
-            voice_dir: tts.voice_dir.clone().into(),
+            voice_dir,
+            log_tokens: tts.log_tokens,
             mutex: tokio::sync::Mutex::new(()),
         })
     }
@@ -312,7 +360,12 @@ impl Model {
 
         let _guard = self.mutex.lock().await;
         let config = &self.tts_config;
-        let (log_tx, log_rx) = logger();
+        let (log_tx, log_rx) = if self.log_tokens {
+            let (tx, rx) = logger();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let log_tx2 = log_tx.clone();
         let sampling = if query.temperature <= 0. || query.top_k <= 1 {
             candle_transformers::generation::Sampling::ArgMax
@@ -340,7 +393,6 @@ impl Model {
 
         let mut last_text_token = config.text_start_token;
         let ca_src = self.voice_ca_src(query.voice.as_ref(), query.voices.as_ref())?;
-        ca_src.device().synchronize()?;
         let ca_src = if query.cfg_alpha.is_some() {
             let lp = self.speaker_encoder.empty()?;
             Tensor::cat(&[ca_src, lp], 0)?
@@ -394,7 +446,9 @@ impl Model {
                         inserted_bos = true;
                         word_tokens.insert(0, text_bos_token)
                     }
-                    log_tx2.send_text(word.to_string());
+                    if let Some(tx) = log_tx2.as_ref() {
+                        tx.send_text(word.to_string());
+                    }
                     in_tx.send(Some(word_tokens))?;
                 }
             }
@@ -466,23 +520,32 @@ impl Model {
                         let audio_tokens =
                             candle::Tensor::from_vec(audio_tokens, (1, cb, 1), state.device())?;
                         if step_idx >= text_audio_delay_in_tokens + acoustic_delay {
-                            let pcm = audio_tokenizer
-                                .decode_step(&audio_tokens.clone().into(), &().into())?;
+                            let audio_tokens_for_log =
+                                log_tx.as_ref().map(|_| audio_tokens.clone());
+                            let pcm =
+                                audio_tokenizer.decode_step(&audio_tokens.into(), &().into())?;
                             if let Some(pcm) = pcm.as_option() {
                                 let pcm = pcm.flatten_all()?.to_vec1::<f32>()?;
-                                let oo = encoder.encode(pcm)?;
+                                let oo = encoder.encode(&pcm)?;
                                 out_tx.send(oo)?;
                             }
+                            if let (Some(tx), Some(audio_tokens_for_log)) =
+                                (log_tx.as_ref(), audio_tokens_for_log)
+                            {
+                                tx.send_slice(last_text_token, audio_tokens_for_log)
+                            }
+                        } else if let Some(tx) = log_tx.as_ref() {
+                            tx.send_slice(last_text_token, audio_tokens)
                         }
-                        log_tx.send_slice(last_text_token, audio_tokens)
-                    } else {
+                    } else if log_tx.is_some() {
                         let cb = state.audio_codebooks();
                         let audio_tokens =
                             candle::Tensor::zeros((1, cb, 1), DType::U32, state.device())?;
-                        log_tx.send_slice(last_text_token, audio_tokens)
+                        if let Some(tx) = log_tx.as_ref() {
+                            tx.send_slice(last_text_token, audio_tokens)
+                        }
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(1));
                 Ok::<(), anyhow::Error>(())
             })();
             match err {
@@ -539,9 +602,11 @@ impl Model {
             }
         }
         tracing::info!("exiting handle-socket");
-        if let Err(err) = log_rx.save(&query, &self.log_dir, &self.instance_name) {
-            tracing::error!(?err, "cannot save logs")
-        };
+        if let Some(log_rx) = log_rx {
+            if let Err(err) = log_rx.save(&query, &self.log_dir, &self.instance_name) {
+                tracing::error!(?err, "cannot save logs")
+            };
+        }
         Ok(())
     }
 
@@ -557,7 +622,7 @@ impl Model {
             }
             (Some(voice), None) => match self.ca_srcs.get(voice) {
                 None => {
-                    let voice_dir = std::fs::canonicalize(&self.voice_dir)?;
+                    let voice_dir = &self.voice_dir;
                     let mut pcms = vec![];
                     let (voice, speaker_cond_start_s) = match voice.split_once('+') {
                         None => (voice.as_str(), 0.0),
@@ -576,6 +641,12 @@ impl Model {
                         tracing::error!(?voice_dir, ?path, "unable to access voice file");
                         anyhow::bail!("unknown voice file '{voice}'")
                     }
+                    let cache_key = format!("{}|{speaker_cond_start_s}", path.to_string_lossy());
+                    if let Ok(mut cache) = self.dynamic_ca_srcs.lock() {
+                        if let Some(v) = cache.get(&cache_key) {
+                            return Ok(v);
+                        }
+                    }
                     let pcm = speaker_pcm(
                         self.speaker_encoder.sample_rate(),
                         speaker_cond_start_s,
@@ -585,12 +656,16 @@ impl Model {
                     )?;
                     pcms.push(pcm.clone());
                     pcms.push(pcm);
-                    Ok(self.speaker_encoder.encode(&pcms)?)
+                    let ca_src = self.speaker_encoder.encode(&pcms)?;
+                    if let Ok(mut cache) = self.dynamic_ca_srcs.lock() {
+                        cache.insert(cache_key, ca_src.clone());
+                    }
+                    Ok(ca_src)
                 }
                 Some(v) => Ok(v.clone()),
             },
             (None, Some(voices)) => {
-                let voice_dir = std::fs::canonicalize(&self.voice_dir)?;
+                let voice_dir = &self.voice_dir;
                 let mut pcms = vec![];
                 for voice in voices.iter() {
                     let (voice, speaker_cond_start_s) = match voice.split_once('+') {
@@ -639,9 +714,14 @@ impl Model {
         )?;
         // Insert an empty word to start with and trigger the first bos.
         prompt.insert(0, (vec![], Speaker::Other));
-        tracing::info!(?prompt, "starting tts");
+        tracing::debug!(?prompt, "starting tts");
         let mut transcript = vec![];
-        let (log_tx, log_rx) = logger();
+        let (log_tx, log_rx) = if self.log_tokens {
+            let (tx, rx) = logger();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let all_audio_tokens = {
             let start_time = std::time::Instant::now();
             let sampling = if query.temperature <= 0. || query.top_k <= 1 {
@@ -729,15 +809,21 @@ impl Model {
                     let cb = audio_tokens.len();
                     let audio_tokens =
                         candle::Tensor::from_vec(audio_tokens, (1, cb, 1), state.device())?;
-                    if step_idx >= text_audio_delay_in_tokens {
-                        all_audio_tokens.push(audio_tokens.clone())
+                    if let Some(tx) = log_tx.as_ref() {
+                        if step_idx >= text_audio_delay_in_tokens {
+                            all_audio_tokens.push(audio_tokens.clone())
+                        }
+                        tx.send_slice(last_text_token, audio_tokens)
+                    } else if step_idx >= text_audio_delay_in_tokens {
+                        all_audio_tokens.push(audio_tokens)
                     }
-                    log_tx.send_slice(last_text_token, audio_tokens)
-                } else {
+                } else if log_tx.is_some() {
                     let cb = state.audio_codebooks();
                     let audio_tokens =
                         candle::Tensor::zeros((1, cb, 1), DType::U32, state.device())?;
-                    log_tx.send_slice(last_text_token, audio_tokens)
+                    if let Some(tx) = log_tx.as_ref() {
+                        tx.send_slice(last_text_token, audio_tokens)
+                    }
                 }
             }
             let dt = start_time.elapsed().as_secs_f64();
@@ -764,9 +850,11 @@ impl Model {
         }
         // Close the log stream so that log_rx.save does not block.
         std::mem::drop(log_tx);
-        if let Err(err) = log_rx.save(&query, &self.log_dir, &self.instance_name) {
-            tracing::error!(?err, "cannot save logs")
-        };
+        if let Some(log_rx) = log_rx {
+            if let Err(err) = log_rx.save(&query, &self.log_dir, &self.instance_name) {
+                tracing::error!(?err, "cannot save logs")
+            };
+        }
 
         let pcm = Tensor::cat(&all_pcm_chunks, 2)?;
         let pcm = pcm.i((0, 0))?.to_vec1::<f32>()?;

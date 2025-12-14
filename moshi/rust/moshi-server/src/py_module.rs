@@ -332,8 +332,8 @@ impl Inner {
                                 c.prev_word_steps = c.steps;
                             }
                             if (mask & MASK_HAS_PCM) > 0 {
-                                let pcm = pcm[batch_idx * FRAME_SIZE..(batch_idx + 1) * FRAME_SIZE]
-                                    .to_vec();
+                                let pcm =
+                                    &pcm[batch_idx * FRAME_SIZE..(batch_idx + 1) * FRAME_SIZE];
                                 match c.encoder.encode(pcm) {
                                     Ok(msg) => {
                                         let _ = c.out_tx.send(msg).is_err();
@@ -347,7 +347,7 @@ impl Inner {
                             // drop out_tx and result in the websock closing.
                             if (mask & MASK_IS_EOS) > 0 {
                                 c.on_end_of_word();
-                                tracing::info!(?batch_idx, "tts finished");
+                                tracing::debug!(?batch_idx, "tts finished");
                                 *channel = None;
                             }
                         }
@@ -478,7 +478,7 @@ impl M {
         use tokio::sync::mpsc;
         use tokio_stream::wrappers::ReceiverStream;
 
-        tracing::info!("py handle-query");
+        tracing::debug!("py handle-query");
         metrics::CONNECT.inc();
         let (batch_idx, in_tx, mut out_rx) = {
             let mut num_tries = 0;
@@ -515,19 +515,20 @@ impl M {
 
         crate::utils::spawn("send_loop", async move {
             let mut wav_buffer = Vec::new();
+            let mut pcm_buf: Vec<f32> = Vec::new();
             moshi::wav::write_wav_header(&mut wav_buffer, 24_000, 0xFFFF_FFFFu32, 0xFFFF_FFFFu32)?;
-            tx.send(Ok(Bytes::from(wav_buffer.clone()))).await?;
+            let header = std::mem::take(&mut wav_buffer);
+            tx.send(Ok(Bytes::from(header))).await?;
             while let Some(data) = out_rx.recv().await {
                 wav_buffer.clear();
-                let pcm = {
+                pcm_buf.resize(data.len() / std::mem::size_of::<f32>(), 0.0);
+                {
                     use byteorder::ByteOrder;
-                    let mut buf = vec![0f32; data.len() / std::mem::size_of::<f32>()];
-                    byteorder::LittleEndian::read_f32_into(&data, &mut buf);
-                    buf
-                };
-
-                moshi::wav::write_pcm_in_wav(&mut wav_buffer, &pcm)?;
-                tx.send(Ok(Bytes::from(wav_buffer.clone()))).await?;
+                    byteorder::LittleEndian::read_f32_into(&data, &mut pcm_buf);
+                }
+                moshi::wav::write_pcm_in_wav(&mut wav_buffer, &pcm_buf)?;
+                let chunk = std::mem::take(&mut wav_buffer);
+                tx.send(Ok(Bytes::from(chunk))).await?;
             }
 
             // We want in_tx to stay open while the send_loop is running, so we capture it
@@ -540,7 +541,7 @@ impl M {
     pub async fn handle_socket(&self, socket: ws::WebSocket, query: Query) -> Result<()> {
         use futures_util::{SinkExt, StreamExt};
 
-        tracing::info!(?query, "py query");
+        tracing::debug!(?query, "py query");
         metrics::CONNECT.inc();
 
         let (mut sender, receiver) = socket.split();
@@ -557,14 +558,14 @@ impl M {
                 anyhow::bail!("no free channels")
             }
         };
-        tracing::info!(?bidx, "batched-py channel");
+        tracing::debug!(?bidx, "batched-py channel");
         let mut text_tokenizer = crate::tts_preprocess::Tokenizer::new(
             self.text_tokenizer.clone(),
             self.config().text_bos_token,
         );
 
         crate::utils::spawn("recv_loop", async move {
-            let timeout_duration = SEND_PING_EVERY * 3;
+            let timeout_duration = SEND_PING_EVERY * 6;
             let mut receiver = receiver;
             let mut send_text = |msg: &str| -> Result<()> {
                 let wwts = text_tokenizer.preprocess(msg)?;
@@ -579,7 +580,7 @@ impl M {
                     Ok(Some(msg)) => msg,
                     Ok(None) => break,
                     Err(_) => {
-                        tracing::info!(?bidx, "recv loop short timeout");
+                        tracing::debug!(?bidx, "recv loop short timeout");
                         break;
                     }
                 };
@@ -587,7 +588,7 @@ impl M {
                     Message::Text(text) => send_text(&text)?,
                     Message::Binary(msg) => {
                         if msg.as_ref() == b"\0" {
-                            tracing::info!(?bidx, "received end of stream");
+                            tracing::debug!(?bidx, "received end of stream");
                             in_tx.send(Msg::Eos)?
                         } else {
                             let msg: InMsg = match rmp_serde::from_slice(&msg) {

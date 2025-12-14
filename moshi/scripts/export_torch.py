@@ -6,11 +6,18 @@
 
 import argparse
 import json
+from pathlib import Path
 import tempfile
 
 from huggingface_hub import HfApi
 
 from moshi.models import loaders
+
+
+def _tmp_dir() -> Path:
+    tmp_dir = Path(__file__).resolve().parents[2] / "tmp" / "moshi"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    return tmp_dir
 
 
 def get_api():
@@ -21,13 +28,17 @@ def get_api():
 
 def main():
     parser = argparse.ArgumentParser('export_quantized')
-    parser.add_argument("--tokenizer", type=str, help="Path to a local tokenizer file.")
-    parser.add_argument("--moshi-weight", type=str, help="Path to a local checkpoint file for Moshi.")
-    parser.add_argument("--mimi-weight", type=str, help="Path to a local checkpoint file for Mimi.")
+    parser.add_argument("--tokenizer", type=str,
+                        help="Path to a local tokenizer file.")
+    parser.add_argument("--moshi-weight", type=str,
+                        help="Path to a local checkpoint file for Moshi.")
+    parser.add_argument("--mimi-weight", type=str,
+                        help="Path to a local checkpoint file for Mimi.")
     parser.add_argument("--hf-repo", type=str, default=loaders.DEFAULT_REPO,
                         help="HF repo to look into, defaults Moshiko. "
                              "Use this to select a different pre-trained model.")
-    parser.add_argument("--config", "--lm-config", dest="config", type=str, help="The config as a json file.")
+    parser.add_argument("--config", "--lm-config", dest="config",
+                        type=str, help="The config as a json file.")
     parser.add_argument('new_hf_repo')
 
     args = parser.parse_args()
@@ -54,7 +65,7 @@ def main():
                 path_in_repo=file.name,
                 repo_id=args.new_hf_repo,
                 repo_type="model")
-    with tempfile.NamedTemporaryFile(mode='w') as file:
+    with tempfile.NamedTemporaryFile(mode='w', dir=_tmp_dir()) as file:
         json.dump(config, file, indent=2)
         file.flush()
         api.upload_file(

@@ -16,6 +16,12 @@ from moshi.models import loaders
 from moshi.utils.quantize import replace_linear_with_qlinear
 
 
+def _tmp_dir() -> Path:
+    tmp_dir = Path(__file__).resolve().parents[2] / "tmp" / "moshi"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    return tmp_dir
+
+
 def get_api():
     token = input("Write token? ").strip()
     api = HfApi(token=token)
@@ -59,7 +65,11 @@ def main():
                 path_in_repo=file,
                 repo_id=new_repo,
                 repo_type="model")
-    with tempfile.NamedTemporaryFile(suffix='.safetensors', delete=True) as file:
+    with tempfile.NamedTemporaryFile(
+        suffix='.safetensors',
+        delete=True,
+        dir=_tmp_dir(),
+    ) as file:
         save_file(model.state_dict(), file.name)
         size = Path(file.name).stat().st_size / 1e9
         print(f"Checkpoint size: {size:.1f}GB")
@@ -77,7 +87,7 @@ def main():
         config['mimi_name'] = f'hf://{repo}/{config["mimi_name"]}'
     if not config['tokenizer_name'].startswith('hf://'):
         config['tokenizer_name'] = f'hf://{repo}/{config["tokenizer_name"]}'
-    with tempfile.NamedTemporaryFile(mode='w') as file:
+    with tempfile.NamedTemporaryFile(mode='w', dir=_tmp_dir()) as file:
         json.dump(config, file, indent=2)
         file.flush()
         api.upload_file(

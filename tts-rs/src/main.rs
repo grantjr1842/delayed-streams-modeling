@@ -12,13 +12,14 @@ use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use ringbuf::{HeapRb, traits::*};
 use serde::Serialize;
-use std::collections::VecDeque;
 use std::io::BufRead;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration as StdDuration;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,37 +36,11 @@ fn default_output_dir() -> String {
     format!("{}/../tmp/tts", env!("CARGO_MANIFEST_DIR"))
 }
 
-struct AudioOutputData_ {
-    chunks: VecDeque<Vec<f32>>,
-    front_idx: usize,
-    queued_samples: usize,
-    started: bool,
-    min_buffer_samples: usize,
-    max_buffer_samples: usize,
-    last_elem: f32,
-}
-
-impl AudioOutputData_ {
-    fn new(capacity_samples: usize, min_buffer_samples: usize, max_buffer_samples: usize) -> Self {
-        let _ = capacity_samples;
-        let chunks = VecDeque::new();
-        Self {
-            chunks,
-            front_idx: 0,
-            queued_samples: 0,
-            started: false,
-            min_buffer_samples,
-            max_buffer_samples,
-            last_elem: 0.0,
-        }
-    }
-}
-
-type AudioOutputData = Arc<Mutex<AudioOutputData_>>;
-
 struct AudioPlayer {
     _stream: cpal::Stream,
-    audio_data: AudioOutputData,
+    producer: ringbuf::HeapProd<f32>,
+    queued_samples: Arc<AtomicUsize>,
+    started: Arc<AtomicBool>,
     output_sample_rate: usize,
 }
 
@@ -319,12 +294,14 @@ fn setup_output_stream(
     let max_buffer_samples = ((output_sample_rate as u64 * max_buffer_ms as u64) / 1000) as usize;
     let min_buffer_samples = usize::max(min_buffer_samples, output_sample_rate / 20);
     let max_buffer_samples = usize::max(max_buffer_samples, min_buffer_samples.saturating_mul(2));
-    let audio_data = Arc::new(Mutex::new(AudioOutputData_::new(
-        output_sample_rate * 4,
-        min_buffer_samples,
-        max_buffer_samples,
-    )));
-    let ad = audio_data.clone();
+
+    let rb = HeapRb::<f32>::new(max_buffer_samples);
+    let (producer, mut consumer) = rb.split();
+    let queued_samples = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(AtomicBool::new(false));
+    let qs = queued_samples.clone();
+    let started_cb = started.clone();
+    let mut last_elem_state = 0.0f32;
 
     if !json {
         let device_name = device.name().unwrap_or_else(|_| "unk".to_string());
@@ -338,43 +315,26 @@ fn setup_output_stream(
         &config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             data.fill(0.);
-            let mut ad = match ad.lock() {
-                Ok(g) => g,
-                Err(g) => g.into_inner(),
-            };
 
-            if !ad.started {
-                if ad.queued_samples < ad.min_buffer_samples {
+            if !started_cb.load(Ordering::Acquire) {
+                if qs.load(Ordering::Acquire) < min_buffer_samples {
                     return;
                 }
-                ad.started = true;
+                started_cb.store(true, Ordering::Release);
             }
 
-            let mut last_elem = ad.last_elem;
+            let mut last_elem = last_elem_state;
+            let mut popped = 0usize;
             for (idx, elem) in data.iter_mut().enumerate() {
                 if idx % channels == 0 {
-                    let mut v_opt = None;
-                    loop {
-                        let Some(front) = ad.chunks.front() else {
-                            break;
-                        };
-                        if ad.front_idx >= front.len() {
-                            let _ = ad.chunks.pop_front();
-                            ad.front_idx = 0;
-                            continue;
-                        }
-                        v_opt = Some(front[ad.front_idx]);
-                        ad.front_idx = ad.front_idx.saturating_add(1);
-                        ad.queued_samples = ad.queued_samples.saturating_sub(1);
-                        break;
-                    }
+                    let v_opt = consumer.try_pop();
                     match v_opt {
                         None => {
-                            ad.started = false;
                             break;
                         }
                         Some(v) => {
                             last_elem = v;
+                            popped = popped.saturating_add(1);
                             *elem = v;
                         }
                     }
@@ -383,7 +343,12 @@ fn setup_output_stream(
                 }
             }
 
-            ad.last_elem = last_elem;
+            if popped > 0 {
+                let _ = qs.fetch_update(Ordering::AcqRel, Ordering::Acquire, |v0| {
+                    Some(v0.saturating_sub(popped))
+                });
+            }
+            last_elem_state = last_elem;
         },
         move |err| eprintln!("cpal error: {err}"),
         None,
@@ -392,7 +357,9 @@ fn setup_output_stream(
 
     Ok(AudioPlayer {
         _stream: stream,
-        audio_data,
+        producer,
+        queued_samples,
+        started,
         output_sample_rate,
     })
 }
@@ -732,7 +699,7 @@ async fn run_tts_once(
 
     let (mut write, mut read) = ws_stream.split();
 
-    let cpal_player = if play_audio && matches!(args.play_backend, PlayBackend::Cpal) {
+    let mut cpal_player = if play_audio && matches!(args.play_backend, PlayBackend::Cpal) {
         match setup_output_stream(
             args.prebuffer_ms,
             args.max_buffer_ms,
@@ -876,7 +843,7 @@ async fn run_tts_once(
                         }
                     }
 
-                    if let (Some(p), Some(r)) = (cpal_player.as_ref(), resampler.as_mut()) {
+                    if let (Some(p), Some(r)) = (cpal_player.as_mut(), resampler.as_mut()) {
                         let mut out = Vec::with_capacity(
                             (pcm.len() as f64 * p.output_sample_rate as f64 / SAMPLE_RATE as f64)
                                 as usize
@@ -884,21 +851,19 @@ async fn run_tts_once(
                         );
                         r.push_samples(&pcm, &mut out)?;
                         if !out.is_empty() {
-                            let mut ad = match p.audio_data.lock() {
-                                Ok(g) => g,
-                                Err(g) => g.into_inner(),
-                            };
-                            ad.queued_samples = ad.queued_samples.saturating_add(out.len());
-                            ad.chunks.push_back(out);
-                            while ad.queued_samples > ad.max_buffer_samples {
-                                let Some(front) = ad.chunks.pop_front() else {
-                                    ad.front_idx = 0;
-                                    ad.queued_samples = 0;
-                                    break;
-                                };
-                                let rem = front.len().saturating_sub(ad.front_idx);
-                                ad.queued_samples = ad.queued_samples.saturating_sub(rem);
-                                ad.front_idx = 0;
+                            let mut pos = 0usize;
+                            while pos < out.len() {
+                                if p.producer.vacant_len() == 0 {
+                                    tokio::time::sleep(StdDuration::from_millis(5)).await;
+                                    continue;
+                                }
+                                let pushed = p.producer.push_slice(&out[pos..]);
+                                if pushed == 0 {
+                                    tokio::time::sleep(StdDuration::from_millis(5)).await;
+                                    continue;
+                                }
+                                p.queued_samples.fetch_add(pushed, Ordering::AcqRel);
+                                pos += pushed;
                             }
                         }
                     }
@@ -1028,25 +993,23 @@ async fn run_tts_once(
         }
     }
 
-    if let (Some(p), Some(r)) = (cpal_player.as_ref(), resampler.as_mut()) {
+    if let (Some(p), Some(r)) = (cpal_player.as_mut(), resampler.as_mut()) {
         let mut out = Vec::with_capacity(1024);
         r.flush(&mut out)?;
         if !out.is_empty() {
-            let mut ad = match p.audio_data.lock() {
-                Ok(g) => g,
-                Err(g) => g.into_inner(),
-            };
-            ad.queued_samples = ad.queued_samples.saturating_add(out.len());
-            ad.chunks.push_back(out);
-            while ad.queued_samples > ad.max_buffer_samples {
-                let Some(front) = ad.chunks.pop_front() else {
-                    ad.front_idx = 0;
-                    ad.queued_samples = 0;
-                    break;
-                };
-                let rem = front.len().saturating_sub(ad.front_idx);
-                ad.queued_samples = ad.queued_samples.saturating_sub(rem);
-                ad.front_idx = 0;
+            let mut pos = 0usize;
+            while pos < out.len() {
+                if p.producer.vacant_len() == 0 {
+                    tokio::time::sleep(StdDuration::from_millis(5)).await;
+                    continue;
+                }
+                let pushed = p.producer.push_slice(&out[pos..]);
+                if pushed == 0 {
+                    tokio::time::sleep(StdDuration::from_millis(5)).await;
+                    continue;
+                }
+                p.queued_samples.fetch_add(pushed, Ordering::AcqRel);
+                pos += pushed;
             }
         }
     }
@@ -1056,26 +1019,14 @@ async fn run_tts_once(
     }
 
     if let Some(p) = cpal_player.as_ref() {
-        {
-            let mut ad = match p.audio_data.lock() {
-                Ok(g) => g,
-                Err(g) => g.into_inner(),
-            };
-            if !ad.started && ad.queued_samples > 0 {
-                ad.started = true;
-            }
+        if !p.started.load(Ordering::Acquire) && p.queued_samples.load(Ordering::Acquire) > 0 {
+            p.started.store(true, Ordering::Release);
         }
 
         let audio_seconds = audio_samples as f64 / SAMPLE_RATE as f64;
         let deadline = Instant::now() + StdDuration::from_secs_f64(audio_seconds + 1.0);
         loop {
-            let remaining = {
-                let ad = match p.audio_data.lock() {
-                    Ok(g) => g,
-                    Err(g) => g.into_inner(),
-                };
-                ad.queued_samples
-            };
+            let remaining = p.queued_samples.load(Ordering::Acquire);
             if remaining == 0 {
                 break;
             }

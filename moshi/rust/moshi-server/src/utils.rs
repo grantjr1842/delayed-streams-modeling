@@ -51,20 +51,138 @@ pub fn replace_env_vars(input: &str) -> String {
 }
 
 pub fn resolve_or_download(input: &str) -> Result<String> {
-    let path = match input.strip_prefix("hf://") {
-        None => replace_env_vars(input),
-        Some(path) => {
-            let s: Vec<&str> = path.split('/').collect();
-            if s.len() < 3 {
-                anyhow::bail!("unexpected format for hf path {input}")
-            }
-            let repo = format!("{}/{}", s[0], s[1]);
-            let file = s[2..].join("/");
-            let api = hf_hub::api::sync::ApiBuilder::from_env().build()?.model(repo);
-            api.get(&file)?.to_string_lossy().to_string()
+    let path = if let Some(path) = input.strip_prefix("hf://") {
+        // Single file download from Hugging Face
+        let s: Vec<&str> = path.split('/').collect();
+        if s.len() < 3 {
+            anyhow::bail!("unexpected format for hf path {input}")
         }
+        let repo = format!("{}/{}", s[0], s[1]);
+        let file = s[2..].join("/");
+        let api = hf_hub::api::sync::ApiBuilder::from_env().build()?.model(repo);
+        api.get(&file)?.to_string_lossy().to_string()
+    } else if let Some(path) = input.strip_prefix("hf-snapshot://") {
+        // Snapshot download from Hugging Face with optional glob pattern
+        // Format: hf-snapshot://org/repo or hf-snapshot://org/repo/**/*.safetensors
+        resolve_hf_snapshot(path)?
+    } else {
+        replace_env_vars(input)
     };
     Ok(path)
+}
+
+/// Resolve an hf-snapshot:// path, downloading matching files into the HF cache
+/// and returning the local cache directory path.
+///
+/// Supports glob patterns like "org/repo/**/*.safetensors" to filter which files are downloaded.
+pub fn resolve_hf_snapshot(input: &str) -> Result<String> {
+    // Parse the repo/org and optional glob pattern
+    // Examples:
+    //   "kyutai/tts-voices" -> download all, return repo dir
+    //   "kyutai/tts-voices/**/*.safetensors" -> download only matching files, return repo dir
+    
+    // Find where the glob pattern starts (first *, ?, or [)
+    let glob_chars = ['*', '?', '['];
+    let glob_start = input.find(|c| glob_chars.contains(&c));
+    
+    let (repo_path, glob_pattern) = match glob_start {
+        Some(pos) => {
+            // Find the last '/' before the glob pattern
+            let repo_end = input[..pos].rfind('/').unwrap_or(pos);
+            let repo_path = &input[..repo_end];
+            let glob = &input[repo_end..].trim_start_matches('/');
+            (repo_path.to_string(), Some(glob.to_string()))
+        }
+        None => (input.to_string(), None),
+    };
+    
+    // Parse repo org/name
+    let parts: Vec<&str> = repo_path.split('/').collect();
+    if parts.len() < 2 {
+        anyhow::bail!("unexpected format for hf-snapshot path, expected org/repo: {input}")
+    }
+    let repo = format!("{}/{}", parts[0], parts[1]);
+    
+    // Build the HF API client
+    let api = hf_hub::api::sync::ApiBuilder::from_env().build()?.model(repo.clone());
+    
+    // Get the repo info to find all files
+    let repo_info = api.info()?;
+    
+    // Collect files to download, applying glob pattern if specified
+    let files_to_download: Vec<String> = if let Some(ref pattern) = glob_pattern {
+        let glob = glob::Pattern::new(pattern)
+            .map_err(|e| anyhow::anyhow!("invalid glob pattern '{}': {}", pattern, e))?;
+        
+        repo_info
+            .siblings
+            .iter()
+            .filter_map(|sibling| {
+                let rfilename = &sibling.rfilename;
+                if glob.matches(rfilename) {
+                    Some(rfilename.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        // Download all files
+        repo_info
+            .siblings
+            .iter()
+            .map(|sibling| sibling.rfilename.clone())
+            .collect()
+    };
+    
+    if files_to_download.is_empty() {
+        if glob_pattern.is_some() {
+            tracing::warn!(
+                repo = %repo,
+                pattern = ?glob_pattern,
+                "no files matched the glob pattern in hf-snapshot"
+            );
+        }
+    } else {
+        tracing::info!(
+            repo = %repo,
+            file_count = files_to_download.len(),
+            pattern = ?glob_pattern,
+            "downloading files from HuggingFace snapshot"
+        );
+        
+        // Download each matching file
+        for file in &files_to_download {
+            tracing::debug!(file = %file, "downloading from HF");
+            api.get(file)?;
+        }
+    }
+    
+    // Return the local cache directory for this repo
+    // The HF hub caches files under ~/.cache/huggingface/hub/models--org--repo/snapshots/<revision>/
+    // We can get the path by downloading any file and getting its parent directory
+    if let Some(first_file) = files_to_download.first() {
+        let local_path = api.get(first_file)?;
+        // Walk up to find the snapshot directory (parent of the file's relative path)
+        let mut snapshot_dir = local_path.clone();
+        let depth = first_file.matches('/').count() + 1;
+        for _ in 0..depth {
+            snapshot_dir = snapshot_dir
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to find snapshot directory"))?
+                .to_path_buf();
+        }
+        Ok(snapshot_dir.to_string_lossy().to_string())
+    } else {
+        // No files to download, just return the repo cache path
+        // We need to create a dummy request to get the cache location
+        let cache_dir = dirs::cache_dir()
+            .ok_or_else(|| anyhow::anyhow!("could not determine cache directory"))?
+            .join("huggingface")
+            .join("hub")
+            .join(format!("models--{}--{}", parts[0], parts[1]));
+        Ok(cache_dir.to_string_lossy().to_string())
+    }
 }
 
 fn walk_toml(t: &mut toml::Value, f: &impl Fn(&mut String) -> Result<()>) -> Result<()> {

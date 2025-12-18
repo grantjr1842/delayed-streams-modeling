@@ -1,0 +1,39 @@
+# TTS Fast Config - Optimized for lower latency at cost of audio quality
+# Use this config when RTF > 1 is causing audio underruns
+#
+# Key differences from config-tts.toml:
+#   - n_q = 4 (vs 16) - Fewer quantization levels for faster inference
+#   - batch_size = 2 (vs 4) - Lower batch size for faster per-request inference
+
+static_dir = "./static/"
+log_dir = "logs/moshi-server-rust/tts-fast"
+instance_name = "config-tts-fast"
+authorized_ids = []
+
+[modules.tts_py]
+type = "Py"
+path = "/api/tts_streaming"
+text_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer_spm_8k_en_fr_audio.model"
+# Lower batch size for faster inference per request
+batch_size = 2
+text_bos_token = 1
+
+[modules.tts_py.py]
+log_folder = "$HOME/tmp/moshi-server-logs"
+voice_folder = "hf-snapshot://kyutai/tts-voices/**/*.safetensors"
+default_voice = "unmute-prod-website/default_voice.wav"
+
+# CFG settings (same as quality config)
+cfg_coef = 2.0
+cfg_is_no_text = true
+
+# Articulation settings
+padding_between = 1
+
+# PERFORMANCE: Lower n_q for faster inference
+# Trade-off: Reduced audio quality for better real-time performance
+# Original: 16, Fast: 4
+n_q = 4
+
+# Speech speed (unchanged)
+padding_bonus = 0

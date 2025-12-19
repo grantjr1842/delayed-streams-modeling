@@ -15,6 +15,6 @@ if [[ -z "${PYO3_PYTHON_BIN}" ]]; then
 fi
 
 env -u VIRTUAL_ENV -u CONDA_PREFIX -u PYO3_CONFIG_FILE PYO3_PYTHON="${PYO3_PYTHON_BIN}" \
-  cargo install --path ./moshi/rust/moshi-server --features cuda --verbose
+  cargo install --path ./server/rust/moshi/moshi-server --features cuda --verbose
 
 moshi-server worker --config configs/config-stt-en_fr-hf.toml

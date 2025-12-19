@@ -8,12 +8,40 @@ See also [Unmute](https://github.com/kyutai-labs/unmute), a voice AI system buil
 But wait, what is "Delayed Streams Modeling"? It is a technique for solving many streaming X-to-Y tasks (with X, Y in `{speech, text}`)
 that formalize the approach we had with Moshi and Hibiki. See our [pre-print about DSM](https://arxiv.org/abs/2509.08753).
 
+## Directory Structure
+
+This repository is organized by component type and programming language:
+
+```
+delayed-streams-modeling/
+├── server/              # Server/backend components
+│   ├── rust/            # Rust server code
+│   │   └── moshi/       # Moshi server workspace
+│   ├── typescript/      # TypeScript server code
+│   │   └── auth-server/ # Authentication server
+│   └── python/          # Python server packages
+│       ├── moshi/       # Core moshi Python package
+│       └── moshi_mlx/   # MLX implementation
+├── client/              # Client/frontend components
+│   └── rust/            # Rust client applications
+│       ├── stt-rs/      # STT standalone client
+│       └── tts-rs/      # TTS standalone client
+├── tools/               # Development tools
+│   ├── notebooks/       # Jupyter notebooks
+│   ├── benchmarks/      # Performance benchmarks
+│   └── quant_bench/     # Quantization benchmarking
+├── configs/             # Configuration files
+├── scripts/             # Utility scripts
+├── docs/                # Documentation
+└── audio/               # Sample audio files
+```
+
 ## Kyutai Speech-To-Text
 
 <a href="https://huggingface.co/collections/kyutai/speech-to-text-685403682cf8a23ab9466886" target="_blank" style="margin: 2px;">
     <img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-KyutaiSTT-blue" style="display: inline-block; vertical-align: middle;"/>
 </a>
-<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/stt_pytorch.ipynb">
+<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tools/notebooks/stt_pytorch.ipynb">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
 
@@ -59,7 +87,7 @@ Here is how to choose which one to use:
 </a>
 
 For an example of how to use the model in a way where you can directly stream in PyTorch tensors,
-[see our Colab notebook](https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/stt_pytorch.ipynb).
+[see our Colab notebook](https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tools/notebooks/stt_pytorch.ipynb).
 
 This requires the [moshi package](https://pypi.org/project/moshi/)
 with version 0.2.6 or later, which can be installed via pip.
@@ -169,10 +197,10 @@ so the full closing handshake lands before the client exits (fixing the
     <img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue" style="display: inline-block; vertical-align: middle;"/>
 </a>
 
-A standalone Rust example script is provided in the `stt-rs` directory in this repo.
+A standalone Rust example script is provided in the `client/rust/stt-rs` directory in this repo.
 This can be used as follows:
 ```bash
-cd stt-rs
+cd client/rust/stt-rs
 cargo run --features cuda -r -- ../audio/bria.mp3
 ```
 You can get the timestamps by adding the `--timestamps` flag, and see the output
@@ -216,7 +244,7 @@ tested to work fine on an iPhone 16 Pro.
 <a href="https://huggingface.co/collections/kyutai/text-to-speech-6866192e7e004ed04fd39e29" target="_blank" style="margin: 2px;">
     <img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-KyutaiTTS-blue" style="display: inline-block; vertical-align: middle;"/>
 </a>
-<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tts_pytorch.ipynb">
+<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tools/notebooks/tts_pytorch.ipynb">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
 
@@ -231,11 +259,11 @@ We provide different implementations of Kyutai TTS for different use cases. Here
 <details>
 <summary>PyTorch implementation</summary>
 
-<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tts_pytorch.ipynb">
+<a target="_blank" href="https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tools/notebooks/tts_pytorch.ipynb">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
 
-Check out our [Colab notebook](https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tts_pytorch.ipynb) or use the script:
+Check out our [Colab notebook](https://colab.research.google.com/github/kyutai-labs/delayed-streams-modeling/blob/main/tools/notebooks/tts_pytorch.ipynb) or use the script:
 
 ```bash
 # From stdin, plays audio immediately

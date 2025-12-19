@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "stt-rs",
+    "tts-rs",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT/Apache-2.0"
+description = "Client applications for Kyutai STT and TTS"
+repository = "https://github.com/kyutai-labs/delayed-streams-modeling"
+
+[workspace.dependencies]
+anyhow = "1"
+candle = { version = "0.9.1", package = "candle-core" }
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+clap = { version = "4.5.53", features = ["derive"] }
+hf-hub = { version = "0.4.3", features = ["tokio"] }
+moshi = "0.6.4"
+tokio = { version = "1.48.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+debug = true

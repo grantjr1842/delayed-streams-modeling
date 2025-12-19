@@ -1,0 +1,96 @@
+[workspace]
+members = [
+    "moshi/mimi-pyo3",
+    "moshi/moshi-backend",
+    "moshi/moshi-cli",
+    "moshi/moshi-core",
+    "moshi/moshi-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.6.4"
+edition = "2021"
+license = "MIT/Apache-2.0"
+description = "moshi server components"
+repository = "https://github.com/kyutai-labs/moshi"
+keywords = ["machine-learning", "audio"]
+categories = ["science"]
+
+[workspace.dependencies]
+anyhow = "1"
+axum = { version = "0.8.7", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+base64 = "0.22.1"
+base64ct = { version = "1.8.0", features = ["alloc"] }
+bincode = "2.0.1"
+byteorder = "1.5.0"
+bytes = "1"
+candle = { version = "0.9.1",  package = "candle-core" }
+chrono = "0.4"
+candle-flash-attn = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+clap = { version = "4.5.53", features = ["derive"] }
+color-eyre = "0.6.5"
+dotenvy = "0.15"
+cpal = "0.16.0"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+env_logger = "0.11.8"
+futures = "0.3.31"
+futures-util = "0.3.31"
+glob = "0.3.2"
+dirs = "5.0.1"
+hf-hub = { version = "0.4.3", features = ["tokio"] }
+http = "1.4.0"
+indicatif = { version = "0.17", features = ["improved_unicode"] }
+jsonwebtoken = "9.3"
+kaudio = "0.2.1"
+lazy_static = "1.5.0"
+log = "0.4.28"
+moshi = { path = "./moshi/moshi-core", version = "0.6.4" }
+native-tls = "0.2.14"
+nvml-wrapper = "0.11.0"
+numpy = "0.27.0"
+ogg = { version = "0.9.2", features = ["async"] }
+owo-colors = "4"
+opus = "0.3.0"
+prometheus = "0.14.0"
+pyo3 = "0.27.2"
+pyo3-ffi = "0.27.2"
+rand = { version = "0.8.5", features = ["getrandom"] }
+rand_chacha = "0.3.1"
+ratatui = "0.29.0"
+rayon = "1.11.0"
+rcgen = "0.14.5"
+regex = "1.12.2"
+rmp-serde = "1.3.0"
+rubato = "0.16.2"
+rustls = "0.23.35"
+sentencepiece = "0.12.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.145"
+sha3 = "0.10.8"
+symphonia = { version = "0.5.5", features = ["all"] }
+tokenizers = "0.22.1"
+tokio = { version = "1.48.0", features = ["full"] }
+tokio-rustls = "0.26.4"
+tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.28.0", features = ["rustls", "native-tls"] }
+toml = "0.9.8"
+tower = "0.5.2"
+tower-http = { version = "0.6", features = ["full"] }
+tracing = "0.1.43"
+tracing-appender = "0.2.4"
+tracing-chrome = "0.7.2"
+tracing-rolling-file = { version = "0.1.3", features = ["non-blocking"] }
+tracing-subscriber = { version = "0.3.22", features = ["chrono", "json"] }
+tui-logger = "0.17.4"
+vergen = { version = "=8.3.2", features = ["build", "cargo", "git", "gitcl", "rustc", "si"] }
+
+[profile.release]
+debug = true
+
+[profile.release-no-debug]
+inherits = "release"
+debug = false

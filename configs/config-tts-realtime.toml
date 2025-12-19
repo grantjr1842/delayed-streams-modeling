@@ -14,7 +14,7 @@ path = "/api/tts_streaming"
 lm_model_file = "hf://kyutai/tts-1.6b-en_fr/dsm_tts_1e68beda@240.safetensors"
 text_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer_spm_8k_en_fr_audio.model"
 # Speaker tokenizer - empty string = use embedded mimi from lm_model_file
-speaker_tokenizer_file = ""
+speaker_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer-e351c8d8-checkpoint125.safetensors"
 audio_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer-e351c8d8-checkpoint125.safetensors"
 
 # Directory for voice files (supports hf-snapshot:// for HF repos with glob patterns)
@@ -28,12 +28,12 @@ log_tokens = false
 # Add preloaded voices here if needed
 
 # LM Model configuration for TTS (1.6B model)
-# Uses 8 codebooks for faster realtime inference (vs 16 for quality)
+# Uses 32 codebooks as required by the model architecture.
 [modules.tts.model]
 text_in_vocab_size = 8001
 text_out_vocab_size = 8000
 audio_vocab_size = 2049
-audio_codebooks = 8
+audio_codebooks = 32
 
 [modules.tts.model.transformer]
 d_model = 2048
@@ -44,7 +44,8 @@ causal = true
 norm_first = true
 bias_ff = false
 bias_attn = false
-context = 3000
+context = 1024
+max_batch_size = 1
 max_period = 100000
 use_conv_block = false
 use_conv_bias = true
@@ -57,13 +58,16 @@ kv_repeat = 1
 max_seq_len = 4096
 
 [modules.tts.model.depformer]
-num_slices = 8
+num_slices = 32
+audio_vocab_size = 2049
+low_rank_embeddings = 128
 
 [modules.tts.model.depformer.transformer]
 d_model = 1024
-num_heads = 16
-num_layers = 6
-dim_feedforward = 4096
+num_heads = 11
+head_dim = 1024
+num_layers = 4
+dim_feedforward = 3072
 causal = true
 norm_first = true
 bias_ff = false

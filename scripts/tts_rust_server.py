@@ -13,6 +13,7 @@
 # ///
 import argparse
 import asyncio
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 import time
@@ -38,6 +39,7 @@ DEFAULT_DSM_TTS_VOICE_REPO = "kyutai/tts-voices"
 def generate_jwt_token(secret: str, user_id: str = "test-user", expiry_hours: int = 24) -> str:
     """
     Generate a JWT token for Better Auth authentication.
+    Matches the BetterAuthClaims structure from moshi-server/src/auth.rs
     
     Args:
         secret: The BETTER_AUTH_SECRET from environment
@@ -47,16 +49,32 @@ def generate_jwt_token(secret: str, user_id: str = "test-user", expiry_hours: in
     Returns:
         JWT token string
     """
-    now = int(time.time())
+    now_dt = datetime.now(timezone.utc)
+    exp_dt = now_dt + timedelta(hours=expiry_hours)
+    
+    # Match the BetterAuthClaims structure from moshi-server/src/auth.rs
     payload = {
-        "sub": user_id,  # Subject (user ID)
-        "iat": now,  # Issued at
-        "exp": now + (expiry_hours * 3600),  # Expiration
-        "session": {  # Better Auth requires session field
+        "session": {
+            "id": f"test-session-{int(time.time())}",
             "userId": user_id,
-            "expiresAt": now + (expiry_hours * 3600),
-        }
+            "createdAt": now_dt.isoformat(),
+            "updatedAt": now_dt.isoformat(),
+            "expiresAt": exp_dt.isoformat(),
+            "token": "test-session-token",
+            "ipAddress": "127.0.0.1",
+            "userAgent": "tts-rust-client/0.1.0",
+        },
+        "user": {
+            "id": user_id,
+            "name": "Test User",
+            "email": "test@example.com",
+            "emailVerified": False,
+            "image": None,
+        },
+        "iat": int(now_dt.timestamp()),
+        "exp": int(exp_dt.timestamp()),
     }
+    
     token = jwt.encode(payload, secret, algorithm="HS256")
     return token
 

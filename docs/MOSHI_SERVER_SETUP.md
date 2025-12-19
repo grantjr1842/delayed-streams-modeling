@@ -20,14 +20,7 @@ Several dependencies had to be pinned or adjusted to resolve conflicts and compi
   vergen = { version = "=8.3.2", features = ["build", "cargo", "git", "gitcl", "rustc", "si"] }
   ```
 
-### PyO3 0.27 Migration
-- **Issue**: The `pyo3` crate was updated to 0.27, which introduced breaking changes to the API.
-- **Fixes Applied** (primarily in `moshi/rust/moshi-server/src/py_module.rs`):
-  - `prepare_freethreaded_python()` replaced with `Python::initialize()`.
-  - `Python::with_gil(...)` replaced with `Python::attach(...)`.
-  - `PyObject` replaced with `Py<PyAny>`.
-  - `downcast_bound` replaced with `cast_bound` (in other locations if applicable).
-  - Usage of `IntoPyObject` trait updates.
+
 
 ## 2. VRAM Detection and Auto-Configuration
 

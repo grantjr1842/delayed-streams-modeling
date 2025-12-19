@@ -8,7 +8,7 @@ authorized_ids = []
 [modules.tts]
 type = "Tts"
 # Under which path should the TTS be available?
-path = "/api/tts_streaming"
+path = "/api/tts"
 
 # Model files from Hugging Face
 lm_model_file = "hf://kyutai/tts-1.6b-en_fr/dsm_tts_1e68beda@240.safetensors"
@@ -19,7 +19,7 @@ audio_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer-e351c8d8-checkpoint
 
 # Directory for voice files (supports hf-snapshot:// for HF repos with glob patterns)
 # Voices are loaded dynamically from this directory
-voice_dir = "hf-snapshot://kyutai/tts-voices/**/*.safetensors"
+voice_dir = "hf-snapshot://kyutai/tts-voices/expresso/**/*.wav"
 
 # Whether to log token generation (useful for debugging)
 log_tokens = false
@@ -85,13 +85,6 @@ conv_layout = false
 conv_kernel_size = 3
 kv_repeat = 1
 max_seq_len = 4096
-
-# Speaker conditioning (description quality) - optional
-[modules.tts.model.conditioners.description]
-type = "Lut"
-n_bins = 31
-dim = 16
-possible_values = ["very_bad", "bad", "neutral", "good", "very_good"]
 
 # TTS Generation configuration
 [modules.tts.generation]

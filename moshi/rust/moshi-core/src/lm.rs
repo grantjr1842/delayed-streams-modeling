@@ -70,6 +70,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         DepFormerConfig { num_slices, transformer: depformer_cfg, low_rank_embeddings: None }
     }
@@ -102,6 +105,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -143,6 +149,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: true,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -215,6 +224,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -254,6 +266,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -302,6 +317,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -339,6 +357,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -381,6 +402,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -419,6 +443,9 @@ impl Config {
             kv_repeat: 1,
             max_seq_len: 4096,
             shared_cross_attn: false,
+            gating_idx: None,
+            head_dim: None,
+            shared_cross_attn_heads: None,
         };
         Self {
             transformer: lm_cfg,
@@ -485,20 +512,89 @@ struct DepFormerSlice {
 
 impl DepFormerSlice {
     fn new(
+        idx: usize,
+        num_slices: usize,
         in_vocab_size: usize,
         out_vocab_size: usize,
         main_transformer_dim: usize,
         cfg: &DepFormerConfig,
         vb: MaybeQuantizedVarBuilder,
+        root_vb: MaybeQuantizedVarBuilder,
     ) -> Result<Self> {
         let dim = cfg.transformer.d_model;
-        let transformer =
-            transformer::StreamingTransformer::new(&cfg.transformer, vb.pp("transformer"))?;
-        let emb =
-            LowRankEmbeddings::new(in_vocab_size, dim, cfg.low_rank_embeddings, vb.pp("emb"))?;
-        let linear_in = linear(main_transformer_dim, dim, false, vb.pp("linear_in"))?;
-        let linear_out = linear(dim, out_vocab_size, false, vb.pp("linear_out"))?;
+
+        let gating_idx = (idx * 11) / num_slices;
+
+        let vb_t = if vb.contains_key("depformer.layers.0.norm1.alpha") {
+            vb.pp("depformer")
+        } else if vb.contains_key("layers.0.norm1.alpha") {
+            vb.clone()
+        } else if vb.contains_key(&format!("{idx}.transformer.layers.0.norm1.alpha")) {
+            vb.pp(idx).pp("transformer")
+        } else {
+            vb.pp(idx).pp("transformer")
+        };
+
+        // If we have shared transformer, we might have indexed gating
+        let mut transformer_cfg = cfg.transformer.clone();
+        transformer_cfg.gating_idx = Some(gating_idx);
+
+        let transformer = transformer::StreamingTransformer::new(&transformer_cfg, vb_t)?;
+
+        let vb_e = if vb.contains_key(&format!("{idx}.emb.embeddings.weight")) {
+            vb.pp(idx).pp("emb")
+        } else if root_vb.contains_key(&format!("depformer_emb.{idx}.weight")) {
+            root_vb.pp("depformer_emb").pp(idx)
+        } else if root_vb.contains_key("depformer_text_emb.weight") && idx == 0 {
+            root_vb.pp("depformer_text_emb")
+        } else if root_vb.contains_key(&format!("depformer_emb.{}.weight", idx.saturating_sub(1))) {
+             root_vb.pp("depformer_emb").pp(idx.saturating_sub(1))
+        } else if vb.contains_key(&format!("emb.embeddings.weight")) {
+            vb.pp("emb")
+        } else {
+            vb.pp(idx).pp("emb")
+        };
+        let emb = LowRankEmbeddings::new(in_vocab_size, dim, cfg.low_rank_embeddings, vb_e)?;
+
+        // depformer_in has 11 entries for 32 slices.
+        let in_idx = (idx * 11) / num_slices;
+        let vb_in = if vb.contains_key(&format!("{idx}.linear_in.weight")) {
+            vb.pp(idx).pp("linear_in")
+        } else if root_vb.contains_key(&format!("depformer_in.{in_idx}.weight")) {
+            root_vb.pp("depformer_in").pp(in_idx)
+        } else if vb.contains_key("linear_in.weight") {
+            vb.pp("linear_in")
+        } else {
+            vb.pp(idx).pp("linear_in")
+        };
+        let linear_in = linear_from_vb(main_transformer_dim, dim, false, vb_in)?;
+
+        let vb_out = if vb.contains_key(&format!("{idx}.linear_out.weight")) {
+            vb.pp(idx).pp("linear_out")
+        } else if root_vb.contains_key(&format!("linears.{idx}.weight")) {
+            root_vb.pp("linears").pp(idx)
+        } else if vb.contains_key("linear_out.weight") {
+            vb.pp("linear_out")
+        } else {
+            vb.pp(idx).pp("linear_out")
+        };
+        let linear_out = linear_from_vb(dim, out_vocab_size, false, vb_out)?;
+
         Ok(Self { transformer, emb, linear_in, linear_out })
+    }
+}
+
+fn linear_from_vb(
+    in_dim: usize,
+    out_dim: usize,
+    bias: bool,
+    vb: MaybeQuantizedVarBuilder,
+) -> Result<MaybeQuantizedLinear> {
+    if vb.contains_key("weight") {
+        linear(in_dim, out_dim, bias, vb)
+    } else {
+        // Handle case where VB is already pointing to the weight/bias or empty
+        linear(in_dim, out_dim, bias, vb)
     }
 }
 
@@ -514,18 +610,27 @@ impl DepFormer {
         main_transformer_dim: usize,
         cfg: &DepFormerConfig,
         vb: MaybeQuantizedVarBuilder,
+        root_vb: MaybeQuantizedVarBuilder,
     ) -> Result<Self> {
         let mut slices = Vec::with_capacity(cfg.num_slices);
         for slice_idx in 0..cfg.num_slices {
-            let in_vs = if slice_idx == 0 { text_vocab_size } else { audio_vocab_size };
+            let in_vs = if slice_idx == 0 && (vb.contains_key("0.emb.embeddings.weight") || vb.contains_key("depformer_text_emb.weight")) {
+                text_vocab_size
+            } else {
+                audio_vocab_size
+            };
             // The depformer cannot predict the audio padding token.
             let slice = DepFormerSlice::new(
+                slice_idx,
+                cfg.num_slices,
                 in_vs,
                 audio_vocab_size - 1, // The depformer cannot emit an audio padding token.
                 main_transformer_dim,
                 cfg,
-                vb.pp(slice_idx),
+                vb.clone(),
+                root_vb.clone(),
             )?;
+        
             slices.push(slice)
         }
         Ok(Self { slices })
@@ -723,12 +828,13 @@ impl LmModel {
             None => None,
             Some(depformer_cfg) => {
                 let depformer = DepFormer::new(
-                    cfg.text_in_vocab_size,
-                    cfg.audio_vocab_size,
-                    d_model,
-                    depformer_cfg,
-                    vb.pp("depformer"),
-                )?;
+                cfg.text_in_vocab_size,
+                cfg.audio_vocab_size,
+                d_model,
+                depformer_cfg,
+                vb.pp("depformer"),
+                vb.clone(),
+            )?;
                 Some(depformer)
             }
         };

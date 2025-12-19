@@ -9,7 +9,7 @@
 // 2. Quantized tensors cannot be easily split (regarding cross attention and QKV proj weights)
 // 3. Linear and Quantized linear layers are two different types
 use crate::nn::{
-    linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder,
+    linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedWeight, MaybeQuantizedVarBuilder,
 };
 use crate::streaming::{StreamMask, StreamTensor, StreamingModule};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
@@ -44,6 +44,12 @@ pub struct Config {
 
     #[serde(default)]
     pub shared_cross_attn: bool,
+    #[serde(default)]
+    pub gating_idx: Option<usize>,
+    #[serde(default)]
+    pub head_dim: Option<usize>,
+    #[serde(default)]
+    pub shared_cross_attn_heads: Option<usize>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -143,8 +149,16 @@ impl XaGate {
                     CrossAttentionGating::ConditionalGatedSigmoidLearnableBias
                         | CrossAttentionGating::ConditionalGatedTanhLearnableBias
                 );
-                let in_proj = linear(dim, hidden_dims, false, vb.pp("alpha.0"))?;
-                let out_proj = linear(hidden_dims, dim, learnable_bias, vb.pp("alpha.2"))?;
+                let alpha_vb = if vb.contains_key("alpha.0.weight") || vb.contains_key("alpha.0.in_proj.weight") {
+                    vb.pp("alpha")
+                } else if vb.contains_key("0.weight") || vb.contains_key("0.in_proj.weight") {
+                    vb.pp("")
+                } else {
+                    vb.pp("alpha")
+                };
+
+                let in_proj = linear(dim, hidden_dims, false, alpha_vb.pp("0"))?;
+                let out_proj = linear(hidden_dims, dim, learnable_bias, alpha_vb.pp("2"))?;
                 let activation = match gating_cfg {
                     CrossAttentionGating::ConditionalGatedTanh
                     | CrossAttentionGating::ConditionalGatedTanhLearnableBias => {
@@ -195,7 +209,8 @@ pub struct StreamingMultiheadCrossAttention {
     out_proj: MaybeQuantizedLinear,
     kv_repeat: usize,
     num_heads: usize,
-    gate: XaGate,
+    head_dim: usize,
+    gating: XaGate,
     span: tracing::Span,
 }
 
@@ -206,8 +221,10 @@ impl StreamingMultiheadCrossAttention {
         gate_vb: Option<MaybeQuantizedVarBuilder>,
     ) -> Result<Self> {
         let embed_dim = cfg.d_model;
-        let num_kv = cfg.num_heads / cfg.kv_repeat;
-        let out_kv_dim = num_kv * (embed_dim / cfg.num_heads);
+        let num_heads = cfg.shared_cross_attn_heads.unwrap_or(cfg.num_heads);
+        let head_dim = cfg.head_dim.unwrap_or(embed_dim / cfg.num_heads);
+        let num_kv = num_heads / cfg.kv_repeat;
+        let out_kv_dim = num_kv * head_dim;
         let out_dim = embed_dim + 2 * out_kv_dim;
         // Case 1 (legacy): A  single in_proj; i.e., both x and ca_src *must* have
         // the same number of dims this is only possible for non-quantized tensors though
@@ -262,7 +279,7 @@ impl StreamingMultiheadCrossAttention {
         };
 
         let out_proj = linear(embed_dim, embed_dim, cfg.bias_attn, vb.pp("out_proj"))?;
-        let gate = match gate_vb {
+        let gating = match gate_vb {
             None => XaGate::new(cfg, vb.pp("gate"))?,
             Some(layer_gate_vb) => XaGate::new(cfg, layer_gate_vb)?,
         };
@@ -271,8 +288,9 @@ impl StreamingMultiheadCrossAttention {
             in_proj_kv,
             out_proj,
             kv_repeat: cfg.kv_repeat,
-            num_heads: cfg.num_heads,
-            gate,
+            num_heads,
+            head_dim,
+            gating,
             span: tracing::span!(tracing::Level::TRACE, "mhca"),
         })
     }
@@ -294,8 +312,7 @@ impl StreamingMultiheadCrossAttention {
             CaSrc::Tokens(xs) => {
                 let kv = xs.apply(&self.in_proj_kv)?;
                 let (ca_b, ca_t, ca_dim) = kv.dims3()?;
-                let head_dim = ca_dim / (2 * self.num_heads);
-                let kv = kv.reshape((ca_b, ca_t, 2, (), head_dim))?;
+                let kv = kv.reshape((ca_b, ca_t, 2, (), self.head_dim))?;
                 // convert to correct float point type for quantized models
                 let kv =
                     if self.is_quantized() { kv.to_dtype(matmul_dtype(xs.device()))? } else { kv };
@@ -314,11 +331,10 @@ impl StreamingMultiheadCrossAttention {
             candle::bail!("only kv-repeat = 1 is supported")
         }
         let (b, t, hd) = xs.dims3()?;
-        let head_dim = hd / self.num_heads;
         // time_dim = 1, layout: b,t,h,d
         let q = xs.apply(&self.in_proj_q)?;
         let original_dtype = q.dtype();
-        let q = q.reshape((b, t, self.num_heads, head_dim))?;
+        let q = q.reshape((b, t, self.num_heads, self.head_dim))?;
         let q = if self.is_quantized() { q.to_dtype(matmul_dtype(xs.device()))? } else { q };
         let (k, v) = self.compute_kv(ca_src)?;
         // qk_layer_norm = None
@@ -326,7 +342,7 @@ impl StreamingMultiheadCrossAttention {
         let q = q.transpose(1, 2)?.contiguous()?; // b,h,t,d
 
         let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
-        let pre_ws = (pre_ws * (head_dim as f64).powf(-0.5))?;
+        let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;
 
         let pre_ws = match mask {
             None => pre_ws,
@@ -340,7 +356,7 @@ impl StreamingMultiheadCrossAttention {
             .reshape((b, t, hd))?
             .to_dtype(original_dtype)?
             .apply(&self.out_proj)?
-            .apply(&self.gate)?;
+            .apply(&self.gating)?;
         Ok(xs)
     }
 }
@@ -407,6 +423,7 @@ pub struct StreamingMultiheadAttention {
     out_proj: MaybeQuantizedLinear,
     kv_repeat: usize,
     num_heads: usize,
+    head_dim: usize,
     context: usize,
     kv_cache: KvCache,
     use_flash_attn: bool,
@@ -416,18 +433,19 @@ pub struct StreamingMultiheadAttention {
 impl StreamingMultiheadAttention {
     pub fn new(cfg: &Config, vb: MaybeQuantizedVarBuilder) -> Result<Self> {
         let embed_dim = cfg.d_model;
-        let num_kv = cfg.num_heads / cfg.kv_repeat;
-        let out_dim = embed_dim + 2 * num_kv * (embed_dim / cfg.num_heads);
+        let head_dim = cfg.head_dim.unwrap_or(embed_dim / cfg.num_heads);
+        let out_dim = 3 * cfg.num_heads * head_dim;
         let in_proj_weight = vb.get((out_dim, embed_dim), "in_proj_weight")?;
         let in_proj_bias =
             if cfg.bias_attn { Some(vb.get_unquantized(out_dim, "in_proj_bias")?) } else { None };
         let in_proj = linear_from(in_proj_weight, in_proj_bias)?;
-        let out_proj = linear(embed_dim, embed_dim, cfg.bias_attn, vb.pp("out_proj"))?;
+        let out_proj = linear(embed_dim, cfg.num_heads * head_dim, cfg.bias_attn, vb.pp("out_proj"))?;
         Ok(Self {
             in_proj,
             out_proj,
             kv_repeat: cfg.kv_repeat,
             num_heads: cfg.num_heads,
+            head_dim,
             context: cfg.context,
             kv_cache: KvCache::new(2, cfg.context),
             use_flash_attn: false,
@@ -453,9 +471,8 @@ impl StreamingMultiheadAttention {
             candle::bail!("only kv-repeat = 1 is supported")
         }
         let (b, t, hd) = xs.dims3()?;
-        let head_dim = hd / self.num_heads;
         // time_dim = 1, layout: b,t,h,d
-        let qkv = xs.apply(&self.in_proj)?.reshape((b, t, 3, self.num_heads, head_dim))?;
+        let qkv = xs.apply(&self.in_proj)?.reshape((b, t, 3, self.num_heads, self.head_dim))?;
         let original_dtype = qkv.dtype();
         let qkv = if self.is_quantized() { qkv.to_dtype(matmul_dtype(xs.device()))? } else { qkv };
         let q = qkv.i((.., .., 0))?;
@@ -489,11 +506,11 @@ impl StreamingMultiheadAttention {
             let q = q.transpose(1, 2)?;
             let k = k.transpose(1, 2)?;
             let v = v.transpose(1, 2)?;
-            let softmax_scale = 1f32 / (head_dim as f32).sqrt();
+            let softmax_scale = 1f32 / (self.head_dim as f32).sqrt();
             flash_attn(&q, &k, &v, softmax_scale, mask.is_some())?.transpose(1, 2)?
         } else {
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
-            let pre_ws = (pre_ws * (head_dim as f64).powf(-0.5))?;
+            let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;
 
             let pre_ws = match mask {
                 None => pre_ws,
@@ -545,7 +562,22 @@ impl Mlp {
                 Ok(Self::NoGating { linear1, linear2 })
             }
             Some(activation) => {
-                let vb = vb.pp("gating");
+                let vb = if let Some(idx) = cfg.gating_idx {
+                    let path = format!("gating.{idx}");
+                    if vb.contains_key(&format!("{path}.linear_in.weight")) {
+                        vb.pp(&path)
+                    } else if vb.contains_key("gating.0.linear_in.weight") {
+                        vb.pp("gating.0")
+                    } else {
+                        vb.pp("gating")
+                    }
+                } else if vb.contains_key("gating.linear_in.weight") {
+                    vb.pp("gating")
+                } else if vb.contains_key("gating.0.linear_in.weight") {
+                    vb.pp("gating.0")
+                } else {
+                    vb.pp("gating")
+                };
                 let hidden = if cfg.dim_feedforward == 4 * d_model {
                     11 * d_model / 4
                 } else {

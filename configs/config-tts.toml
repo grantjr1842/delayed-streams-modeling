@@ -5,53 +5,107 @@ instance_name = "config-tts"
 # Authentication is handled by Better Auth JWT (BETTER_AUTH_SECRET env var)
 authorized_ids = []
 
-[modules.tts_py]
-type = "Py"
-# Under which path should the TTS be available? This is relevant because the server
-# can run STT at the same time.
+[modules.tts]
+type = "Tts"
+# Under which path should the TTS be available?
 path = "/api/tts_streaming"
+
+# Model files from Hugging Face
+lm_model_file = "hf://kyutai/tts-1.6b-en_fr/dsm_tts_1e68beda@240.safetensors"
 text_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer_spm_8k_en_fr_audio.model"
-# Batch size determines how many parallel connections can the server handle.
-# Higher values mean slower inference. Adjust to your GPU memory capacity.
-batch_size = 4
+# Speaker tokenizer - empty string = use embedded mimi from lm_model_file
+speaker_tokenizer_file = ""
+audio_tokenizer_file = "hf://kyutai/tts-1.6b-en_fr/tokenizer-e351c8d8-checkpoint125.safetensors"
+
+# Directory for voice files (supports hf-snapshot:// for HF repos with glob patterns)
+# Voices are loaded dynamically from this directory
+voice_dir = "hf-snapshot://kyutai/tts-voices/**/*.safetensors"
+
+# Whether to log token generation (useful for debugging)
+log_tokens = false
+
+# Preloaded voices (name = path to safetensors file)
+# These voices are available immediately without dynamic loading
+[modules.tts.voices]
+# Add preloaded voices here, e.g.:
+# default = "hf://kyutai/tts-voices/unmute-prod-website/default_voice.safetensors"
+
+# LM Model configuration for TTS (1.6B model)
+[modules.tts.model]
+text_in_vocab_size = 8001
+text_out_vocab_size = 8000
+audio_vocab_size = 2049
+audio_codebooks = 16
+
+[modules.tts.model.transformer]
+d_model = 2048
+num_heads = 16
+num_layers = 16
+dim_feedforward = 8192
+causal = true
+norm_first = true
+bias_ff = false
+bias_attn = false
+context = 3000
+max_period = 100000
+use_conv_block = false
+use_conv_bias = true
+gating = "silu"
+norm = "RmsNorm"
+positional_embedding = "Rope"
+conv_layout = false
+conv_kernel_size = 3
+kv_repeat = 1
+max_seq_len = 4096
+
+[modules.tts.model.depformer]
+num_slices = 8
+
+[modules.tts.model.depformer.transformer]
+d_model = 1024
+num_heads = 16
+num_layers = 6
+dim_feedforward = 4096
+causal = true
+norm_first = true
+bias_ff = false
+bias_attn = false
+context = 32
+max_period = 10000
+use_conv_block = false
+use_conv_bias = true
+gating = "silu"
+norm = "RmsNorm"
+positional_embedding = "None"
+conv_layout = false
+conv_kernel_size = 3
+kv_repeat = 1
+max_seq_len = 4096
+
+# Speaker conditioning (description quality) - optional
+[modules.tts.model.conditioners.description]
+type = "Lut"
+n_bins = 31
+dim = 16
+possible_values = ["very_bad", "bad", "neutral", "good", "very_good"]
+
+# TTS Generation configuration
+[modules.tts.generation]
+# Acoustic delay between text and audio tokens
+acoustic_delay = 2
+# Special tokens for text processing
+text_pad_token = 3
 text_bos_token = 1
-
-[modules.tts_py.py]
-log_folder = "$HOME/tmp/moshi-server-logs"
-# The folder to read voices from. Can be a local directory, or a Hugging Face repo
-# using the "hf-snapshot://" prefix. We use a glob to only download the .safetensors files
-# with voice embeddings since the repo also contains .wav files we don't need.
-voice_folder = "hf-snapshot://kyutai/tts-voices/**/*.safetensors"
-# This voice will be used if the user doesn't specify one, or selects a non-existent one.
-# This usually means something is wrong, so here we set it to a strange voice to make it clear
-# that something is off.
-# Relative to the voice folder.
-default_voice = "unmute-prod-website/default_voice.wav"
-
-# Classifier-free guidance coefficient (see https://arxiv.org/abs/2207.12598).
-# TLDR: A higher CFG value makes the model adhere to the voice more closely,
-# but it can affect audio quality and make it more likely to make mistakes
-# like inserting words that aren't in the script.
-# Technical details:
-# CFG has the disadvantage of increasing inference time, because you need to run the model
-# twice for each step (once with the voice embedding, once without).
-# The default model, "tts-1.6b-en_fr", is trained with CFG distillation, which means it learns
-# to mimic CFG with different coefs during training, without actually using CFG at inference time.
-# These is only a fixed set of CFG coefs the model was trained with, so using a different value
-# will not work. The recommended value for this model is 2.0.
-cfg_coef = 2.0
-
-# Whether the unconditioned branch of the CFG should still have text conditioning or not.
-# Typically, no need to touch this.
-cfg_is_no_text = true
-
-# Number of padding frames to force between words. Will make the model articulate
-# a bit better with values such as 1.
-padding_between = 1
-# Number of quantization levels for the residual vector quantizer.
-# Higher means better sounding audio but longer inference.
-# The maximum is typically 32, reasonable values are 8-32.
-n_q = 16
-# Make the model speak faster or slower by changing how likely it is to sample the padding token.
-# Should be between -2 and 2, with positive values leading to slower speech.
-padding_bonus = 0
+text_eos_token = 2
+text_eop_token = 0
+text_start_token = 8000
+# Delay between text and audio in tokens (2 seconds at 12.5 Hz = 25 tokens)
+text_audio_delay_in_tokens = 25
+# Max consecutive padding tokens before forcing end-of-phrase
+max_consecutive_pads = 10
+# Extra steps after text is exhausted
+extra_steps = 5
+# Speaker conditioning settings
+speaker_cond_duration_s = 10.0
+speaker_cond_dim = 2048
+speaker_cond_n_speakers = 5

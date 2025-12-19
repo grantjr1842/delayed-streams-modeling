@@ -7,23 +7,58 @@
 #     "websockets",
 #     "sounddevice",
 #     "tqdm",
+#     "PyJWT",
+#     "python-dotenv",
 # ]
 # ///
 import argparse
 import asyncio
+import os
 import sys
+import time
 from urllib.parse import urlencode
 
+from dotenv import load_dotenv
+import jwt
 import msgpack
 import numpy as np
 import sphn
 import tqdm
 import websockets
 
+# Load environment variables from .env file
+load_dotenv()
+
 SAMPLE_RATE = 24000
 
 TTS_TEXT = "Hello, this is a test of the moshi text to speech system, this should result in some nicely sounding generated voice."
 DEFAULT_DSM_TTS_VOICE_REPO = "kyutai/tts-voices"
+
+
+def generate_jwt_token(secret: str, user_id: str = "test-user", expiry_hours: int = 24) -> str:
+    """
+    Generate a JWT token for Better Auth authentication.
+    
+    Args:
+        secret: The BETTER_AUTH_SECRET from environment
+        user_id: User ID to include in the token (default: "test-user")
+        expiry_hours: Token validity period in hours (default: 24)
+    
+    Returns:
+        JWT token string
+    """
+    now = int(time.time())
+    payload = {
+        "sub": user_id,  # Subject (user ID)
+        "iat": now,  # Issued at
+        "exp": now + (expiry_hours * 3600),  # Expiration
+        "session": {  # Better Auth requires session field
+            "userId": user_id,
+            "expiresAt": now + (expiry_hours * 3600),
+        }
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    return token
 
 
 async def receive_messages(websocket: websockets.ClientConnection, output_queue):
@@ -32,7 +67,7 @@ async def receive_messages(websocket: websockets.ClientConnection, output_queue)
         last_seconds = 0
 
         async for message_bytes in websocket:
-            msg = msgpack.unpackb(message_bytes)
+            msg = msgpack.unpackb(message_bytes, raw=False)
 
             if msg["type"] == "Audio":
                 pcm = np.array(msg["pcm"]).astype(np.float32)
@@ -87,7 +122,7 @@ async def output_audio(out: str, output_queue: asyncio.Queue[np.ndarray | None])
                 break
             frames.append(item)
 
-        sphn.write_wav(out, np.concat(frames, -1), SAMPLE_RATE)
+        sphn.write_wav(out, np.concatenate(frames, -1), SAMPLE_RATE)
         print(f"Saved audio to {out}")
 
 
@@ -149,15 +184,25 @@ async def websocket_client():
     )
     parser.add_argument(
         "--token",
-        help="Better Auth JWT token for authentication (get from browser session)",
+        help="Better Auth JWT token for authentication (get from browser session or auto-generated from BETTER_AUTH_SECRET)",
         default=None,
     )
     args = parser.parse_args()
 
+    # Auto-generate token from BETTER_AUTH_SECRET if not provided
+    token = args.token
+    if not token:
+        secret = os.getenv("BETTER_AUTH_SECRET")
+        if secret:
+            token = generate_jwt_token(secret)
+            print(f"Generated JWT token from BETTER_AUTH_SECRET")
+        else:
+            print("Note: No token provided and BETTER_AUTH_SECRET not set. Authentication may fail if server requires auth.")
+
     params = {"voice": args.voice, "format": "PcmMessagePack"}
-    # Add token to query params if provided for Better Auth JWT authentication
-    if args.token:
-        params["token"] = args.token
+    # Add token to query params if available for Better Auth JWT authentication
+    if token:
+        params["token"] = token
     uri = f"{args.url}/api/tts_streaming?{urlencode(params)}"
     print(uri)
 
@@ -172,12 +217,14 @@ async def websocket_client():
             print("go send")
             async for line in get_lines(args.inp):
                 for word in line.split():
-                    await websocket.send(msgpack.packb({"type": "Text", "text": word}))
-            await websocket.send(msgpack.packb({"type": "Eos"}))
+                    await websocket.send(word)
+            await websocket.send(b"\0")
 
         output_queue = asyncio.Queue()
-        receive_task = asyncio.create_task(receive_messages(websocket, output_queue))
-        output_audio_task = asyncio.create_task(output_audio(args.out, output_queue))
+        receive_task = asyncio.create_task(
+            receive_messages(websocket, output_queue))
+        output_audio_task = asyncio.create_task(
+            output_audio(args.out, output_queue))
         send_task = asyncio.create_task(send_loop())
         await asyncio.gather(receive_task, output_audio_task, send_task)
 

@@ -48,7 +48,7 @@ Use a config optimized for real-time performance:
 ```
 
 #### Long-term Fix
-Issue #79 (Refactor to pure Rust) removes the Python/PyO3 overhead, expected to reduce RTF by 30-50%.
+The pure Rust refactoring (completed in Issue #79) has removed Python/PyO3 overhead, improving performance significantly.
 
 ## Key Configuration Parameters
 

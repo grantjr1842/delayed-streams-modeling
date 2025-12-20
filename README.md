@@ -122,7 +122,7 @@ Another example shows how one can provide a text-, audio-, or text-audio prompt 
 uv run scripts/stt_from_file_with_prompt_pytorch.py \
   --hf-repo kyutai/stt-2.6b-en \
   --file audio/bria.mp3 \
-  --prompt_file ./audio/loonah.mp3 \
+  --prompt_file audio/loona.mp3 \
   --prompt_text "Loonah" \
   --cut-prompt-transcript
 ```
@@ -201,7 +201,7 @@ A standalone Rust example script is provided in the `client/rust/stt-rs` directo
 This can be used as follows:
 ```bash
 cd client/rust/stt-rs
-cargo run --features cuda -r -- ../audio/bria.mp3
+cargo run --features cuda -r -- ../../../audio/bria.mp3
 ```
 You can get the timestamps by adding the `--timestamps` flag, and see the output
 of the semantic VAD by adding the `--vad` flag.

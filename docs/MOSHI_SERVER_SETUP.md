@@ -8,14 +8,14 @@ Several dependencies had to be pinned or adjusted to resolve conflicts and compi
 
 ### `rand` and `getrandom`
 - **Issue**: `moshi` code (specifically `moshi-backend`) relies on `rand` with the `getrandom` feature. The latest `rand` 0.9.0 removed/refactored this feature, causing compilation failures.
-- **Fix**: Pinned `rand` to version `0.8.5` in `moshi/rust/Cargo.toml`.
+- **Fix**: Pinned `rand` to version `0.8.5` in `server/rust/moshi/Cargo.toml`.
   ```toml
   rand = { version = "0.8.5", features = ["getrandom"] }
   ```
 
 ### `vergen`
 - **Issue**: `moshi-server` uses `vergen` for build metadata. `vergen` 9.x introduced breaking API changes (removing the `git` feature in favor of separate crates). The existing code uses the 8.x API.
-- **Fix**: Pinned `vergen` to version `8.3.2` (specifically `=8.3.2` to avoid 9.x updates) in `moshi/rust/Cargo.toml`.
+- **Fix**: Pinned `vergen` to version `8.3.2` (specifically `=8.3.2` to avoid 9.x updates) in `server/rust/moshi/Cargo.toml`.
   ```toml
   vergen = { version = "=8.3.2", features = ["build", "cargo", "git", "gitcl", "rustc", "si"] }
   ```
@@ -104,7 +104,7 @@ When using JWT authentication (Better Auth), the server validates the user's app
 
 - **Issue**: The RTX 2070 (Compute Capability 7.5) supports FP16 but has issues with BF16 in some Candle/Moshi operations, or requires explicit F32 for stability in certain matmul operations.
 - **Fix**:
-  - In `moshi/rust/moshi-core/src/nn.rs`, the `matmul_dtype` function is forced to return `DType::F32` for now.
+  - In `server/rust/moshi/moshi-core/src/nn.rs`, the `matmul_dtype` function is forced to return `DType::F32` for now.
   - `utils.rs` or `main.rs` might detect `7.5` and suggest `F16`, but the core logic enforces safe types where necessary.
 
 ## 5. Configuration Files
@@ -202,7 +202,7 @@ Logs are written to the `log_dir` specified in the config file (e.g., `logs/mosh
 
 To build the server with these changes:
 ```bash
-cd moshi/rust/moshi-server
+cd server/rust/moshi/moshi-server
 cargo install --path . --features cuda --force
 ```
 

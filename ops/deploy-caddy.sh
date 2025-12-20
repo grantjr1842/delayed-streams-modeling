@@ -33,14 +33,14 @@ log_info "Deploying Caddy configuration..."
 
 # 1. Deploy Caddyfile
 log_info "Copying Caddyfile to /etc/caddy/Caddyfile"
-cp "$REPO_ROOT/Caddyfile" /etc/caddy/Caddyfile
+cp "$REPO_ROOT/ops/Caddyfile" /etc/caddy/Caddyfile
 chown root:root /etc/caddy/Caddyfile
 chmod 644 /etc/caddy/Caddyfile
 
 # 2. Deploy systemd override
 log_info "Installing systemd override for auto-restart"
 mkdir -p /etc/systemd/system/caddy.service.d
-cp "$REPO_ROOT/systemd/caddy.service.d/override.conf" /etc/systemd/system/caddy.service.d/override.conf
+cp "$REPO_ROOT/ops/systemd/caddy.service.d/override.conf" /etc/systemd/system/caddy.service.d/override.conf
 chown root:root /etc/systemd/system/caddy.service.d/override.conf
 chmod 644 /etc/systemd/system/caddy.service.d/override.conf
 

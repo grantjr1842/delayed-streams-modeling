@@ -141,10 +141,10 @@ pub async fn run(args: &StandaloneArgs, config: &Config) -> Result<()> {
     let cert_pem = config.cert_file("cert.pem");
     let key_pem = config.cert_file("key.pem");
     if !cert_pem.exists() || !key_pem.exists() {
-        let rcgen::CertifiedKey { cert, key_pair } =
+        let rcgen::CertifiedKey { cert, signing_key, .. } =
             rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
         std::fs::write(&cert_pem, cert.pem())?;
-        std::fs::write(&key_pem, key_pair.serialize_pem())?;
+        std::fs::write(&key_pem, signing_key.serialize_pem())?;
     }
 
     let tls_config =

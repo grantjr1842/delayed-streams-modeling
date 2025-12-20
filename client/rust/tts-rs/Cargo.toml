@@ -21,9 +21,4 @@ tokio = { version = "1.42", features = ["full", "rt-multi-thread", "macros", "io
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 url = "2.5"
 
-[profile.release]
-debug = true
 
-[profile.release-no-debug]
-inherits = "release"
-debug = false

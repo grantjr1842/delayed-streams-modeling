@@ -1,12 +1,24 @@
 [workspace]
-members = [
-    "moshi/mimi-pyo3",
-    "moshi/moshi-backend",
-    "moshi/moshi-cli",
-    "moshi/moshi-core",
-    "moshi/moshi-server",
-]
 resolver = "2"
+members = [
+    "server/rust/moshi/mimi-pyo3",
+    "server/rust/moshi/moshi-backend",
+    "server/rust/moshi/moshi-cli",
+    "server/rust/moshi/moshi-core",
+    "server/rust/moshi/moshi-server",
+    "client/rust/stt-rs",
+    "client/rust/tts-rs",
+    "tools/gpu-check",
+    "tools/bf16-to-fp16",
+    "tools/log-formatter",
+    "tools/token-gen",
+    "tools/sm75-prep",
+    "tools/s3-upload",
+    "tools/quant-bench",
+    "tools/tts-client",
+    "tools/stt-client",
+    "tools/smoke-test",
+]
 
 [workspace.package]
 version = "0.6.4"
@@ -48,7 +60,7 @@ jsonwebtoken = "9.3"
 kaudio = "0.2.1"
 lazy_static = "1.5.0"
 log = "0.4.28"
-moshi = { path = "./moshi/moshi-core", version = "0.6.4" }
+moshi = { path = "server/rust/moshi/moshi-core", version = "0.6.4" }
 native-tls = "0.2.14"
 nvml-wrapper = "0.11.0"
 numpy = "0.27.0"

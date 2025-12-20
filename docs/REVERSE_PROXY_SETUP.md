@@ -69,7 +69,7 @@ stt.fullen.dev {
 Run the deployment script to install/update the Caddyfile and systemd configuration:
 
 ```bash
-sudo ./scripts/deploy-caddy.sh
+sudo ./ops/deploy-caddy.sh
 ```
 
 This script:

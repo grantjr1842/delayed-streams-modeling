@@ -64,8 +64,4 @@ default = []
 cuda = ["moshi/cuda", "candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 metal = ["moshi/metal", "candle/metal", "candle-nn/metal", "candle-transformers/metal"]
 
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+

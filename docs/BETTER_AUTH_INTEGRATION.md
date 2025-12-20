@@ -58,16 +58,18 @@ export const auth = betterAuth({
 
 ## Web Client Configuration
 
+**Note**: This section describes integration for a future Next.js web client. The `moshi/client` directory referenced here does not currently exist in this repository. For the current Kyutai web client implementation, see the [kyutai-labs/moshi](https://github.com/kyutai-labs/moshi) repository.
+
 ### Installation
 
 ```bash
-cd moshi/client
+# In your Next.js web client project
 npm install better-auth
 ```
 
 ### Auth Client Setup
 
-The auth client is configured in `src/lib/auth-client.ts`:
+The auth client should be configured in `src/lib/auth-client.ts`:
 
 ```typescript
 import { createAuthClient } from "better-auth/react";

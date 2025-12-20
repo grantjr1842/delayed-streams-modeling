@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "gpu-check",
+    "bf16-to-fp16",
+    "log-formatter",
+    "token-gen",
+    "sm75-prep",
+    "s3-upload",
+    "quant-bench",
+    "tts-client",
+    "stt-client",
+    "smoke-test",
+]
+resolver = "2"

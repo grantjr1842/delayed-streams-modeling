@@ -4,6 +4,13 @@ pub struct AudioChunk {
     pub sample_rate_hz: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ResampleQuality {
+    #[default]
+    Linear,
+    High,
+}
+
 pub mod level;
 pub use level::{AudioLevel, LevelMeter};
 
@@ -12,3 +19,6 @@ pub mod mic;
 
 #[cfg(feature = "mic")]
 pub use mic::MicCapture;
+
+#[cfg(feature = "mic")]
+pub use mic::MicCaptureConfig;

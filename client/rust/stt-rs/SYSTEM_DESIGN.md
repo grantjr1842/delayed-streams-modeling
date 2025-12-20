@@ -1,6 +1,6 @@
 # Kyutai STT Rust Client
 
-## Systems Design Guide (Agent-Ready)
+## Systems Design Guide (Implementation Notes)
 
 **Purpose**: This document specifies the architecture, protocol, and implementation plan for a **Rust client** that streams audio to the **Kyutai STT server** (`moshi-server`) and receives **word-level transcription events** (with timestamps and optional semantic VAD signals).
 
@@ -17,7 +17,7 @@
   - `hooks/use-websocket.ts` (utterance assembly / finalize heuristic)
   - `public/worklets/audio-processor.js` (resample-to-24k + chunking strategy)
 
-This guide is meant to be used by LLM coding agents to fully implement the `kyutai-stt-rust-client` project (library + CLI) from scratch.
+This guide documents the current implementation and can be used by LLM coding agents to maintain or extend the `kyutai-stt-rust-client` project (library + CLI).
 
 ---
 
@@ -33,12 +33,12 @@ This guide is meant to be used by LLM coding agents to fully implement the `kyut
 - [7. Error Handling & Reconnection](#7-error-handling--reconnection)
 - [8. Security](#8-security)
 - [9. Observability](#9-observability)
-- [10. Project Layout (Recommended)](#10-project-layout-recommended)
-  - [10.1 Cargo Workspace Skeleton](#101-cargo-workspace-skeleton)
+- [10. Project Layout (Current)](#10-project-layout-current)
+  - [10.1 Workspace Tree](#101-workspace-tree)
   - [10.2 Dependency Set & Feature Flags](#102-dependency-set--feature-flags)
-  - [10.3 Suggested Public APIs](#103-suggested-public-apis)
-  - [10.4 File & Module Creation Order (Agent-Friendly)](#104-file--module-creation-order-agent-friendly)
-- [11. Implementation Plan (Agent Checklist)](#11-implementation-plan-agent-checklist)
+  - [10.3 Public APIs (Current)](#103-public-apis-current)
+  - [10.4 Module Map (Current)](#104-module-map-current)
+- [11. Implementation Status (Current)](#11-implementation-status-current)
 - [12. Acceptance Criteria](#12-acceptance-criteria)
 
 ---
@@ -275,7 +275,7 @@ The web client’s AudioWorklet uses **linear interpolation** resampling and pro
 For Rust, acceptable options:
 
 - **Simple**: linear interpolation resampler (close to web client behavior).
-- **Higher quality**: `rubato` resampler.
+- **Higher quality**: `rubato` resampler (available via the `hq-resample` feature).
 
 ### Normalization
 
@@ -285,9 +285,12 @@ If capturing from i16 PCM, normalize to float32:
 
 ### Model-specific quirks to bake into the Rust client
 
-- **`kyutai/stt-2.6b-en` (2.6B) silence prefix**: the Python helper `scripts/stt_from_file_rust_server.py` sends ~1 second of initial silence before real audio and notes it is required “for technical reasons”.
-  - Add a CLI flag like `--silence-prefix-ms` (default `0`, but recommend `1000` for the 2.6B model).
-- **Stream end flushing**: don’t just send `Marker` and stop; you must send enough trailing silence (see [Stream end flushing (critical)](#stream-end-flushing-critical)).
+- **`kyutai/stt-2.6b-en` (2.6B) silence prefix**: the Python helper `scripts/stt_from_file_rust_server.py`
+  sends ~1 second of initial silence before real audio and notes it is required “for technical reasons”.
+  The CLI now supports `--silence-prefix-ms` for both `mic` and `file` to prepend silence before streaming
+  (rounded up to 80ms chunks).
+- **Stream end flushing**: don’t just send `Marker` and stop; you must send enough trailing silence.
+  The library does this in `SttSession::shutdown` by sending a marker and periodic silence until the marker returns.
 
 ---
 
@@ -331,6 +334,11 @@ Use `tokio` with at least these tasks:
   - Maintains last pending `Word` until `EndWord` arrives
   - Builds utterances
 
+Current implementation notes:
+
+- The client spawns a send loop plus a keepalive loop; recv decoding runs in a spawned task
+  and feeds an internal channel that `SttEventStream` consumes.
+
 ### Backpressure & drop policy
 
 A bounded audio queue is mandatory. Recommended behavior:
@@ -338,6 +346,11 @@ A bounded audio queue is mandatory. Recommended behavior:
 - If the queue is full:
   - Either block briefly (preferred for offline/file streaming)
   - Or drop oldest frames (preferred for real-time mic if you value “live-ness” over completeness)
+
+Current implementation:
+
+- Mic capture uses a small bounded channel and drops buffered audio if the queue is full
+  (favoring live-ness).
 
 ---
 
@@ -365,7 +378,9 @@ In practice, server behavior is sequential, so a single pending slot works.
 
 ### Partial transcript
 
-Maintain a current “utterance in progress” string by concatenating words.
+Maintain a current “utterance in progress” string by concatenating words. The current
+implementation emits `UtterancePartial` updates throttled by a minimum interval
+(default: 100ms) to avoid spamming downstream consumers.
 
 ### Utterance finalization heuristic
 
@@ -373,7 +388,7 @@ The web client finalizes after a natural pause:
 
 - If no new `Word` is received within `1500ms`, finalize current utterance.
 
-Replicate this heuristic for parity.
+Replicate this heuristic for parity (current default: 1500ms).
 
 ### Semantic VAD (`Step`)
 
@@ -422,28 +437,24 @@ From `moshi-server/src/protocol.rs`:
  `kyutai-stt-web-client/lib/websocket/errors.ts` contains close-code mapping logic that may not match the server.
  Always implement the mapping from `moshi-server/src/protocol.rs` as the source of truth.
 
-### Client error taxonomy
+### Client error taxonomy (current)
 
-Define a Rust error enum with at least:
-
-- Transport errors (DNS, TCP, TLS)
-- Protocol decode errors (MessagePack)
-- Auth errors (401-like)
-- Server close code errors (4000-4999)
+The library currently exposes a single error type (`SttError::Message(String)`) and forwards
+server-side failures via `SttEvent::Error`.
 
 ### Reconnection policy
 
 For a pure “streaming mic” client:
 
-- Reconnect can be enabled, but **do not attempt to replay old audio**.
-- On reconnect:
-  - Start a new session and reset transcript state.
+- Reconnect is **opt-in** via `SttClientBuilder::auto_reconnect(max_attempts)`.
+- Default settings: 3 attempts with a 1 second delay.
+- Retryable close codes in the current client: `4000`, `4004`, `4005`, `4006`, `1012`, `1013`.
+- Reconnect does **not** replay old audio; it starts a fresh session and resets transcript state.
 
 For a “stream from file” client:
 
-- Reconnect can be enabled with checkpointing:
-  - Track audio frame index
-  - Resume from last acknowledged marker (advanced; optional)
+- The CLI does not attempt reconnection. If you add it, you will need checkpointing
+  to resume from a known frame boundary (not implemented).
 
 ---
 
@@ -462,12 +473,14 @@ The server uses Better Auth JWT validation.
 
 The included web client provides `/api/auth/token` which issues a short-lived JWT signed with `BETTER_AUTH_SECRET`.
 
-For Rust CLI/library, recommended approaches:
+For the Rust CLI/library, the current implementation supports:
 
-- **Static token**: user supplies a token via env var or CLI flag.
-- **TokenProvider abstraction**:
-  - `fn get_token(&self) -> Future<String>`
-  - Implementation may call an HTTP endpoint.
+- **Static token**: user supplies a token via CLI flag.
+- **CLI token generation**: `kyutai-stt-cli` can generate a JWT locally using
+  `--secret`/`BETTER_AUTH_SECRET` and optional `.env(.<env>)` files.
+
+If you need HTTP-based token fetching, add a token provider abstraction on top of
+the library (not implemented yet).
 
 ### TLS
 
@@ -497,312 +510,156 @@ Expose counters/histograms:
 
 ---
 
-## 10. Project Layout (Recommended)
+## 10. Project Layout (Current)
 
-Implement as a Cargo workspace with:
+The project is a Cargo workspace with:
 
 - `crates/kyutai-stt-client` (library)
 - `crates/kyutai-stt-cli` (CLI)
 
-Suggested Rust module layout inside the library:
-
-- `auth/`
-  - token provider trait
-- `protocol/`
-  - `InMsg`, `OutMsg`, encode/decode
-  - close code mapping
-- `ws/`
-  - websocket connection management
-  - send/recv tasks
-- `audio/`
-  - capture (cpal)
-  - resample
-  - chunk
-- `transcript/`
-  - word timing assembler
-  - utterance finalizer
-- `types/`
-  - public events, structs
-
-### 10.1 Cargo Workspace Skeleton
-
-Recommended directory tree:
+### 10.1 Workspace Tree
 
 ```text
 kyutai-stt-rust-client/
   Cargo.toml
+  README.md
+  SYSTEM_DESIGN.md
+  scripts/
+    ci.sh
+    run-with-token.sh
+    generate_test_token.py
   crates/
     kyutai-stt-client/
       Cargo.toml
       src/
         lib.rs
-        auth/
-          mod.rs
-        protocol/
-          mod.rs
-          messages.rs
-          msgpack.rs
-          close_codes.rs
-        transcript/
-          mod.rs
-          assembler.rs
-          utterance.rs
-        ws/
-          mod.rs
-          client.rs
-          send_loop.rs
-          recv_loop.rs
+        audio.rs
         audio/
-          mod.rs
-          chunker.rs
-          resampler.rs
+          level.rs
           mic.rs
-          file.rs
+        protocol.rs
+        transcript.rs
         types.rs
+        ws.rs
+        error.rs
     kyutai-stt-cli/
       Cargo.toml
       src/
         main.rs
+        auth.rs
 ```
-
-Minimal root `Cargo.toml` (example):
-
-```toml
-[workspace]
-resolver = "2"
-members = [
-  "crates/kyutai-stt-client",
-  "crates/kyutai-stt-cli",
-]
-
-[workspace.package]
-edition = "2024"
-license = "MIT"
-
-[workspace.dependencies]
-anyhow = "1"
-thiserror = "2"
-serde = { version = "1", features = ["derive"] }
-rmp-serde = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-futures-util = "0.3"
-url = "2"
-http = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
-
-# WebSocket (prefer rustls for predictable behavior)
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-
-# Optional audio (enable in the library with features)
-cpal = "0.16"
-rubato = "0.16"
-kaudio = "0.2.1"
-```
-
-Notes:
-
-- The versions above are a *recommended starting point*.
-- If you want perfect alignment with the repo’s STT ecosystem, you can mirror `delayed-streams-modeling/stt-rs/Cargo.toml` versions for `kaudio`, etc.
 
 ### 10.2 Dependency Set & Feature Flags
 
-#### Minimal required deps (WS + MessagePack only)
+Current core dependencies:
 
-These are sufficient to implement a headless client that accepts already-chunked `Vec<f32>` frames:
-
-- `tokio`
-- `tokio-tungstenite` (+ `rustls-tls-webpki-roots` for `wss://`)
-- `futures-util`
-- `serde`
-- `rmp-serde`
-- `thiserror` (or `anyhow`)
+- `tokio`, `tokio-tungstenite`, `futures-util`
+- `serde`, `rmp-serde`
+- `url`, `http`
 - `tracing`
-- `url` + `http` (for request building + headers)
 
-#### Recommended optional deps
+CLI-specific dependencies:
 
-- **Mic capture**: `cpal`
-- **Resampling**: `rubato` (HQ) or implement a small linear interpolator (LQ, simplest)
-- **File decode/resample**: `kaudio` (matches `delayed-streams-modeling/stt-rs`)
-- **Token fetch**: `reqwest` (only if you implement an HTTP-based token provider)
+- `kaudio` (file decode)
+- `jsonwebtoken` + `chrono` (token generation)
+- `serde_json` (token helpers)
 
-#### Feature flags (recommended)
-
-In `crates/kyutai-stt-client/Cargo.toml`, expose features so agents can implement incrementally:
+Feature flags in `crates/kyutai-stt-client/Cargo.toml`:
 
 - `default = ["mic", "file"]`
-- `mic = ["dep:cpal"]`
-- `file = ["dep:kaudio"]`
-- `hq-resample = ["dep:rubato"]`
+- `mic = ["dep:cpal"]` (used by the library)
+- `file = ["dep:kaudio"]` (used by the CLI today)
+- `hq-resample = ["dep:rubato"]` (enables `rubato` resampling when opted in)
 
-### 10.3 Suggested Public APIs
+### 10.3 Public APIs (Current)
 
-The goal is to make the library easy to integrate for both CLI and future GUI clients.
+Core types:
 
-#### Core types
+- `WordTiming { word: String, start_ms: u64, end_ms: u64, confidence: Option<f32> }`
+- `Utterance { text: String }`
+- `MicCaptureConfig { resample_quality: ResampleQuality }`
+- `ResampleQuality::{Linear, High}`
 
-- `WordTiming { word: String, start_time_s: f64, end_time_s: f64 }`
-- `Utterance { id: String, words: Vec<WordTiming>, text: String, started_at: std::time::Instant }`
-
-#### Event stream
-
-Prefer a single public enum:
+Event stream:
 
 - `SttEvent`:
   - `Ready`
-  - `Word { text, start_time_s }`
-  - `EndWord { stop_time_s }`
+  - `WordReceived { text, start_ms }`
   - `WordFinalized(WordTiming)`
-  - `UtterancePartial { id, text }`
+  - `UtterancePartial(Utterance)`
   - `UtteranceFinal(Utterance)`
   - `VadStep { step_idx, prs, buffered_pcm }`
-  - `Marker { id }`
+  - `StreamMarker { id }`
   - `Error { message }`
-  - `Disconnected { close_code, reason }`
 
-#### Client construction
+Client construction:
 
-Use a builder to reduce call-site complexity:
-
-- `SttClientBuilder::new(server_url)`
-- `.auth_bearer(token)` or `.auth_query(token)`
-- `.ping_interval(Duration)` (default: 5s)
-- `.utterance_finalize_delay(Duration)` (default: 1500ms)
+- `SttClientBuilder::new().url(server_url)`
+- `.auth_token(token)` or `.query_token(token)`
+- `.auto_reconnect(max_attempts)`
+- `.reconnect_delay(Duration)`
 - `.connect().await -> SttSession`
 
-Where `SttSession` provides:
+Session and stream:
 
-- `events() -> tokio::sync::mpsc::Receiver<SttEvent>` (or `impl Stream<Item = SttEvent>`)
-- `send_audio_frame(&self, frame: Vec<f32>) -> Result<()>`
-- `finish(&self) -> Result<()>` (sends marker + trailing silence until marker received)
-- `close(&self) -> Result<()>` (closes WS)
+- `SttSession::sender() -> SttSender`
+- `SttSession::into_event_stream() -> SttEventStream`
+- `SttSession::shutdown().await`
+- `SttEventStream::recv().await -> Result<SttEvent>`
+- `SttEventStream::utterance_finalize_delay(Duration)`
+- `SttEventStream::utterance_partial_interval(Duration)`
+- `SttSender::send(InMsg)` / `SttSender::close()`
 
-#### WebSocket request building (Authorization header)
+Mic capture:
 
-`tokio-tungstenite` supports custom headers by building a request:
+- `MicCapture::start_default_with_config(MicCaptureConfig)`
 
-```text
-1) Parse URL
-2) Convert to client request
-3) Insert "Authorization: Bearer <token>"
-4) connect_async(request)
-```
+### 10.4 Module Map (Current)
 
-### 10.4 File & Module Creation Order (Agent-Friendly)
-
-Create files in this order to avoid circular dependencies and unblock unit tests early:
-
-#### Layer 1: Protocol + types (no networking)
-
-1. `types.rs` (public structs: `WordTiming`, `Utterance`, `SttEvent`)
-2. `protocol/messages.rs` (`InMsg`, `OutMsg` with `#[serde(tag = "type")]`)
-3. `protocol/msgpack.rs` (encode/decode helpers)
-4. `protocol/close_codes.rs` (map server close codes into a Rust enum)
-
-#### Layer 2: Transcript assembly (pure logic)
-
-5. `transcript/assembler.rs` (Word + EndWord pairing)
-6. `transcript/utterance.rs` (1500ms finalize timer orchestration)
-
-#### Layer 3: WebSocket
-
-7. `ws/client.rs` (connect + spawn loops)
-8. `ws/send_loop.rs` (audio frames + periodic Ping)
-9. `ws/recv_loop.rs` (decode OutMsg + emit SttEvents)
-
-#### Layer 4: Audio
-
-10. `audio/chunker.rs` (enforce 1920 sample frames)
-11. `audio/resampler.rs` (linear first; `rubato` behind feature)
-12. `audio/mic.rs` (`cpal` capture; behind `mic` feature)
-13. `audio/file.rs` (`kaudio` decode/resample; behind `file` feature)
-
-#### Layer 5: CLI
-
-14. `crates/kyutai-stt-cli/src/main.rs` (subcommands: `mic`, `file`)
+- `audio.rs`, `audio/mic.rs`, `audio/level.rs`: mic capture, linear/HQ resampling, chunking, level meter
+- `protocol.rs`: MessagePack `InMsg`/`OutMsg` and encode/decode helpers
+- `transcript.rs`: Word/EndWord pairing and ms conversion
+- `types.rs`: public event and timing types
+- `ws.rs`: WebSocket connect, keepalive, auto-reconnect, event stream
+- `error.rs`: shared error type
+- `crates/kyutai-stt-cli/src/main.rs`: CLI commands, file streaming, progress/RTF display
+- `crates/kyutai-stt-cli/src/auth.rs`: Better Auth JWT generation
 
 ---
 
-## 11. Implementation Plan (Agent Checklist)
+## 11. Implementation Status (Current)
 
-### Phase 0: Scaffold
+Implemented:
 
-- [ ] Create Cargo workspace
-- [ ] Add minimal CI that matches the strict workflow:
-  - [ ] `cargo fmt --all -- --check --verbose --verbose`
-  - [ ] `cargo clippy --all-targets --all-features -- --verbose --verbose`
-  - [ ] `cargo test --all-features --verbose --verbose`
+- MessagePack `InMsg`/`OutMsg` types and encode/decode helpers.
+- WebSocket client with keepalive ping every 5 seconds.
+- Auth via bearer header and query token.
+- Event stream with WordReceived/WordFinalized and utterance partial/final events.
+- Transcript assembly and 1500ms finalize heuristic.
+- Auto-reconnect (opt-in) for retryable close codes.
+- Shutdown flush using `Marker` + trailing silence (5 second timeout).
+- Mic capture with linear resampling to 24kHz mono and 1920-sample chunks.
+- HQ resampling via `rubato` when the `hq-resample` feature is enabled.
+- Audio level meter (RMS/peak) for CLI visualizations.
+- CLI commands: `mic`, `file`, `token`, `mic-test` with progress/RTF, silence prefix, HQ resample, and WAV capture.
 
-### Phase 1: Protocol types (no networking)
+Not implemented yet:
 
-- [ ] Define `InMsg` / `OutMsg` with `serde` tags matching server (`#[serde(tag = "type")]`).
-- [ ] Implement MessagePack encode/decode helpers.
-- [ ] Unit tests:
-  - [ ] roundtrip `Audio` with `Vec<f32>`
-  - [ ] decode sample `Word` message
-
-### Phase 2: WebSocket transport
-
-- [ ] Implement `SttWsClient`:
-  - [ ] connect with optional query token and/or Authorization header
-  - [ ] spawn send loop
-  - [ ] spawn recv loop
-  - [ ] graceful shutdown
-- [ ] Implement keepalive:
-  - [ ] application-level `Ping` every 5s (parity with web client)
-
-### Phase 3: Transcript assembly
-
-- [ ] Implement word timing assembler (Word + EndWord).
-- [ ] Implement utterance finalization timeout (1500ms).
-- [ ] Define event stream:
-  - WordReceived
-  - WordFinalized
-  - UtterancePartial
-  - UtteranceFinal
-  - VadStep
-  - StreamMarker
-
-### Phase 4: Audio capture (mic)
-
-- [ ] Implement mic capture with `cpal`.
-- [ ] Resample to 24kHz mono.
-- [ ] Chunk to 1920 samples.
-
-### Phase 5: CLI
-
-- [ ] `stt-mic`:
-  - [ ] print words as they arrive
-  - [ ] optional timestamps
-- [ ] `stt-file`:
-  - [ ] file decode -> resample -> stream
-  - [ ] support `--rtf` (real-time factor) like python helper
-
-### Phase 6: Robustness
-
-- [ ] Interpret close codes and print helpful messages.
-- [ ] Optional reconnection for retryable close codes.
-- [ ] Ensure client drains server messages until `OutMsg::Marker` before closing.
-
-#### Stream end flushing (critical)
-
-To ensure the server emits the marker:
-
-- Send `Marker{id}`
-- Continue sending silence frames (1920 zeros) until you receive `OutMsg::Marker{id}`
-- Then close with WS code 1000
+- Token provider abstraction in the library.
+- Library-level file decoding helpers (CLI uses `kaudio` directly).
+- Ogg Opus streaming path in the CLI.
 
 ---
 
 ## 12. Acceptance Criteria
 
-- [ ] Can connect to `ws://127.0.0.1:8080/api/asr-streaming` (with valid token).
-- [ ] Streams mic audio and prints words in real time.
-- [ ] Produces word-level timestamps (start/stop) from `Word` + `EndWord`.
-- [ ] Does not get disconnected during silence (keepalive works).
-- [ ] On stop, client receives `Marker` from server before exiting (clean shutdown).
+Current behavior should satisfy:
+
+- Can connect to `ws://127.0.0.1:8080/api/asr-streaming` with a valid token.
+- Streams mic audio and prints words in real time.
+- Produces word-level timestamps (start/stop) from `Word` + `EndWord`.
+- Does not get disconnected during silence (keepalive works).
+- On shutdown, the client waits for a marker flush before closing.
 
 ---
 

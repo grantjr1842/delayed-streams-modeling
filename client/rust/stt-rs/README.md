@@ -4,12 +4,15 @@ A Rust client library and CLI for streaming audio to the **Kyutai STT server** (
 
 ## Features
 
-- **Real-time streaming** — Stream microphone audio or files to the STT server over WebSocket
-- **Word-level timestamps** — Receive `Word` + `EndWord` events with precise timing information
-- **Utterance assembly** — Automatic utterance finalization with configurable timeout (default: 1500ms)
-- **Better Auth JWT** — Built-in authentication support via Bearer header or query parameter
-- **Keepalive** — Application-level ping to prevent server timeouts during silence
-- **Flexible audio input** — Microphone capture (`cpal`) or file decode (`kaudio`)
+- **Real-time streaming** - Stream microphone audio or file playback to the STT server over WebSocket
+- **Word-level timestamps** - Receive `Word` + `EndWord` events with precise timing information
+- **Utterance assembly** - Automatic utterance finalization with configurable timeout (default: 1500ms)
+- **Better Auth JWT** - Bearer header or query parameter auth, plus CLI token generation
+- **Keepalive** - Application-level ping every 5 seconds to prevent idle timeouts
+- **Reconnect helper** - Optional auto-reconnect on retryable close codes (library)
+- **Silence prefix** - Optional prefix padding for models that need startup silence
+- **HQ resampling** - Optional high-quality resampling via `rubato`
+- **CLI utilities** - Progress/RTF display, level meter, mic test with optional WAV capture
 
 ## Crates
 
@@ -43,11 +46,29 @@ cargo build --all-features --release --verbose --verbose
 # Stream from microphone (requires a valid token)
 cargo run -p kyutai-stt-cli -- --auth-token <JWT> mic
 
+# Stream from microphone with a silence prefix
+cargo run -p kyutai-stt-cli -- --auth-token <JWT> mic --silence-prefix-ms 1000
+
+# Stream from microphone with HQ resampling (requires feature flag)
+cargo run -p kyutai-stt-cli --features hq-resample -- --auth-token <JWT> mic --hq-resample
+
+# Stream from microphone using a query token (URL param)
+cargo run -p kyutai-stt-cli -- --query-token <JWT> mic
+
 # Stream from audio file
 cargo run -p kyutai-stt-cli -- --url ws://localhost:8080/api/asr-streaming --auth-token <JWT> file input.wav
 
 # Stream from audio file with progress + RTF status line
 cargo run -p kyutai-stt-cli -- --auth-token <JWT> file input.wav --progress
+
+# Stream from audio file at 0.75x real-time
+cargo run -p kyutai-stt-cli -- --auth-token <JWT> file input.wav --rtf 0.75
+
+# Stream from audio file with a silence prefix
+cargo run -p kyutai-stt-cli -- --auth-token <JWT> file input.wav --silence-prefix-ms 1000
+
+# Stream from audio file with HQ resampling (requires feature flag)
+cargo run -p kyutai-stt-cli --features hq-resample -- --auth-token <JWT> file input.wav --hq-resample
 
 # Show real-time input level meter (RMS/peak dB)
 cargo run -p kyutai-stt-cli -- --auth-token <JWT> mic --show-level
@@ -63,6 +84,9 @@ cargo run -p kyutai-stt-cli -- --env development mic --auto-token
 
 # Generate a JWT token directly
 cargo run -p kyutai-stt-cli -- --env development token --hours 2
+
+# Generate a JWT token with an explicit secret
+cargo run -p kyutai-stt-cli -- --secret <BETTER_AUTH_SECRET> token --hours 2
 
 # Test microphone input without server (useful for debugging audio setup)
 cargo run -p kyutai-stt-cli -- mic-test
@@ -80,7 +104,7 @@ The STT server expects:
 - **Frame size**: 1920 samples (80ms)
 - **Format**: Float32 PCM
 
-The client automatically resamples input audio to meet these requirements.
+The client automatically resamples input audio to meet these requirements (linear interpolation).
 
 ## Architecture
 
@@ -101,8 +125,10 @@ The `kyutai-stt-client` library supports feature flags:
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `mic` | ✓ | Microphone capture via `cpal` |
-| `file` | ✓ | Audio file decoding via `kaudio` |
-| `hq-resample` | | High-quality resampling via `rubato` |
+| `file` | ✓ | Enables the `kaudio` dependency (CLI handles file decode today) |
+| `hq-resample` | | Enables `rubato` resampling (used by mic capture + CLI when opted in) |
+
+Note: file decoding and resampling for playback are implemented in the CLI; the library currently exposes mic capture and audio level metering.
 
 ## Development
 

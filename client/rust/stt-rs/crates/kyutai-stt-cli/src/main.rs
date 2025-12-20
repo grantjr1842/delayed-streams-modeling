@@ -1,8 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use kyutai_stt_client::audio::{AudioLevel, LevelMeter, MicCapture};
+use kyutai_stt_client::audio::{
+    AudioLevel, LevelMeter, MicCapture, MicCaptureConfig, ResampleQuality,
+};
 use kyutai_stt_client::protocol::InMsg;
 use kyutai_stt_client::{SttClientBuilder, SttEvent};
+#[cfg(feature = "hq-resample")]
+use rubato::Resampler;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,6 +23,53 @@ const FILE_INPUT_CHUNK_SAMPLES: usize = 4096;
 const LEVEL_RENDER_INTERVAL: Duration = Duration::from_millis(50);
 const PROGRESS_RENDER_INTERVAL: Duration = Duration::from_millis(200);
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(200);
+
+fn silence_samples_from_ms(prefix_ms: u64, sample_rate_hz: usize) -> usize {
+    let samples = (prefix_ms as u128 * sample_rate_hz as u128 + 999) / 1000;
+    samples as usize
+}
+
+fn ensure_hq_resample_enabled(requested: bool) -> Result<()> {
+    if !requested {
+        return Ok(());
+    }
+
+    #[cfg(feature = "hq-resample")]
+    {
+        Ok(())
+    }
+
+    #[cfg(not(feature = "hq-resample"))]
+    {
+        Err(anyhow::anyhow!(
+            "hq-resample requested but the CLI was built without the hq-resample feature"
+        ))
+    }
+}
+
+async fn send_silence_prefix(
+    sender: &kyutai_stt_client::SttSender,
+    prefix_ms: u64,
+) -> Result<()> {
+    let total_samples = silence_samples_from_ms(prefix_ms, OUTPUT_SAMPLE_RATE_HZ);
+    if total_samples == 0 {
+        return Ok(());
+    }
+
+    let chunk_duration =
+        Duration::from_secs_f64(OUTPUT_CHUNK_SAMPLES as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);
+    let chunk_count = (total_samples + OUTPUT_CHUNK_SAMPLES - 1) / OUTPUT_CHUNK_SAMPLES;
+    let silence_chunk = vec![0.0f32; OUTPUT_CHUNK_SAMPLES];
+
+    for idx in 0..chunk_count {
+        sender.send(InMsg::Audio { pcm: silence_chunk.clone() }).await?;
+        if idx + 1 < chunk_count {
+            tokio::time::sleep(chunk_duration).await;
+        }
+    }
+
+    Ok(())
+}
 
 struct LinearResampler {
     in_rate_hz: u32,
@@ -69,6 +120,127 @@ impl LinearResampler {
         if drain > 0 {
             self.buf.drain(0..drain);
             self.pos -= drain as f64;
+        }
+    }
+}
+
+#[cfg(feature = "hq-resample")]
+struct HqResampler {
+    resampler: rubato::FftFixedInOut<f32>,
+    pending: Vec<f32>,
+}
+
+#[cfg(feature = "hq-resample")]
+impl HqResampler {
+    const CHUNK_SIZE: usize = 1024;
+
+    fn new(in_rate_hz: u32, out_rate_hz: u32) -> Result<Self> {
+        let resampler = rubato::FftFixedInOut::<f32>::new(
+            in_rate_hz as usize,
+            out_rate_hz as usize,
+            Self::CHUNK_SIZE,
+            1,
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+        Ok(Self {
+            resampler,
+            pending: Vec::new(),
+        })
+    }
+
+    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
+        out.clear();
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        self.pending.extend_from_slice(input);
+        let chunk_size = self.resampler.input_frames_next();
+        if chunk_size == 0 {
+            return Ok(());
+        }
+
+        while self.pending.len() >= chunk_size {
+            let chunk = &self.pending[..chunk_size];
+            let resampled = self.resampler.process(&[chunk], None)?;
+            if let Some(channel) = resampled.get(0) {
+                out.extend_from_slice(channel);
+            }
+            self.pending.drain(..chunk_size);
+        }
+
+        Ok(())
+    }
+
+    fn flush_into(&mut self, out: &mut Vec<f32>) -> Result<()> {
+        out.clear();
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+
+        let resampled = self.resampler.process_partial(Some(&[self.pending.as_slice()]), None)?;
+        if let Some(channel) = resampled.get(0) {
+            out.extend_from_slice(channel);
+        }
+        self.pending.clear();
+        Ok(())
+    }
+}
+
+enum FileResampler {
+    Linear(LinearResampler),
+    #[cfg(feature = "hq-resample")]
+    High(HqResampler),
+}
+
+impl FileResampler {
+    fn new(in_rate_hz: u32, out_rate_hz: u32, hq: bool) -> Result<Option<Self>> {
+        if in_rate_hz == out_rate_hz {
+            return Ok(None);
+        }
+
+        if hq {
+            #[cfg(feature = "hq-resample")]
+            {
+                return Ok(Some(Self::High(HqResampler::new(
+                    in_rate_hz,
+                    out_rate_hz,
+                )?)));
+            }
+            #[cfg(not(feature = "hq-resample"))]
+            {
+                return Err(anyhow::anyhow!(
+                    "hq-resample requested but the CLI was built without the hq-resample feature"
+                ));
+            }
+        }
+
+        Ok(Some(Self::Linear(LinearResampler::new(
+            in_rate_hz,
+            out_rate_hz,
+        ))))
+    }
+
+    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
+        match self {
+            FileResampler::Linear(resampler) => {
+                resampler.process_into(input, out);
+                Ok(())
+            }
+            #[cfg(feature = "hq-resample")]
+            FileResampler::High(resampler) => resampler.process_into(input, out),
+        }
+    }
+
+    fn flush_into(&mut self, out: &mut Vec<f32>) -> Result<()> {
+        match self {
+            FileResampler::Linear(resampler) => {
+                resampler.process_into(&[], out);
+                Ok(())
+            }
+            #[cfg(feature = "hq-resample")]
+            FileResampler::High(resampler) => resampler.flush_into(out),
         }
     }
 }
@@ -133,6 +305,14 @@ struct MicArgs {
     /// Enable verbose logging of model performance parameters (VAD steps)
     #[arg(long, short = 'v')]
     verbose: bool,
+
+    /// Prepend silence before streaming (milliseconds, rounded to 80ms chunks)
+    #[arg(long, default_value = "0")]
+    silence_prefix_ms: u64,
+
+    /// Use high-quality resampling (requires `--features hq-resample`)
+    #[arg(long)]
+    hq_resample: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -153,6 +333,14 @@ struct FileArgs {
     /// Enable verbose logging of model performance parameters (VAD steps)
     #[arg(long, short = 'v')]
     verbose: bool,
+
+    /// Prepend silence before streaming (milliseconds, rounded to 80ms chunks)
+    #[arg(long, default_value = "0")]
+    silence_prefix_ms: u64,
+
+    /// Use high-quality resampling (requires `--features hq-resample`)
+    #[arg(long)]
+    hq_resample: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -315,6 +503,8 @@ async fn run_mic(
     mic_args: MicArgs,
     buffered_output: bool,
 ) -> Result<()> {
+    ensure_hq_resample_enabled(mic_args.hq_resample)?;
+
     let mut builder = SttClientBuilder::new().url(url);
 
     if let Some(token) = auth_token {
@@ -330,7 +520,22 @@ async fn run_mic(
     eprintln!("Connected! Listening for speech... (Ctrl+C to stop)");
 
     let sender = events.sender();
-    let mut mic = MicCapture::start_default()?;
+    if mic_args.silence_prefix_ms > 0 {
+        eprintln!(
+            "Sending {}ms of silence before streaming...",
+            mic_args.silence_prefix_ms
+        );
+        send_silence_prefix(&sender, mic_args.silence_prefix_ms).await?;
+    }
+
+    let resample_quality = if mic_args.hq_resample {
+        ResampleQuality::High
+    } else {
+        ResampleQuality::Linear
+    };
+    let mut mic = MicCapture::start_default_with_config(MicCaptureConfig {
+        resample_quality,
+    })?;
     let stderr_is_tty = std::io::stderr().is_terminal();
     let show_level = mic_args.show_level && stderr_is_tty;
     let stdout_is_tty = std::io::stdout().is_terminal();
@@ -595,6 +800,8 @@ async fn run_file(
     file_args: FileArgs,
     buffered_output: bool,
 ) -> Result<()> {
+    ensure_hq_resample_enabled(file_args.hq_resample)?;
+
     let mut builder = SttClientBuilder::new().url(url);
 
     if let Some(token) = auth_token {
@@ -608,12 +815,15 @@ async fn run_file(
         kaudio::pcm_decode(&file_args.path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let rtf = file_args.rtf.filter(|v| v.is_finite() && *v > 0.0);
-    let total_samples = if sr_in as usize == OUTPUT_SAMPLE_RATE_HZ {
+    let silence_prefix_samples =
+        silence_samples_from_ms(file_args.silence_prefix_ms, OUTPUT_SAMPLE_RATE_HZ);
+    let audio_samples = if sr_in as usize == OUTPUT_SAMPLE_RATE_HZ {
         pcm.len()
     } else {
         (pcm.len() as u64 * OUTPUT_SAMPLE_RATE_HZ as u64 / sr_in.max(1) as u64)
             .saturating_add(2) as usize
     };
+    let total_samples = audio_samples.saturating_add(silence_prefix_samples);
     let total_duration =
         Duration::from_secs_f64(total_samples as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);
 
@@ -635,9 +845,18 @@ async fn run_file(
     let progress_task =
         progress_rx.map(|rx| spawn_progress_task(rx, total_duration, stderr_is_tty));
 
+    if file_args.silence_prefix_ms > 0 {
+        eprintln!(
+            "Sending {}ms of silence before streaming...",
+            file_args.silence_prefix_ms
+        );
+    }
+
     let marker_id: i64 = 1;
+    let silence_prefix_ms = file_args.silence_prefix_ms;
+    let hq_resample = file_args.hq_resample;
     let progress_tx_for_send = progress_tx.clone();
-    let send_task = tokio::spawn(async move {
+    let send_task: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
         let chunk_duration =
             Duration::from_secs_f64(OUTPUT_CHUNK_SAMPLES as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);
         let start = Instant::now();
@@ -645,19 +864,45 @@ async fn run_file(
         let mut samples_sent: usize = 0;
         let progress_tx = progress_tx_for_send;
 
-        let mut resampler = if sr_in as usize != OUTPUT_SAMPLE_RATE_HZ {
-            Some(LinearResampler::new(sr_in as u32, OUTPUT_SAMPLE_RATE_HZ as u32))
-        } else {
-            None
-        };
+        let mut resampler =
+            FileResampler::new(sr_in as u32, OUTPUT_SAMPLE_RATE_HZ as u32, hq_resample)?;
         let mut resample_buf = Vec::<f32>::new();
         let mut pending = Vec::<f32>::new();
         let mut pending_read_idx = 0usize;
 
+        if silence_prefix_ms > 0 {
+            let silence_samples = silence_samples_from_ms(silence_prefix_ms, OUTPUT_SAMPLE_RATE_HZ);
+            let silence_chunks = (silence_samples + OUTPUT_CHUNK_SAMPLES - 1) / OUTPUT_CHUNK_SAMPLES;
+            let silence_chunk = vec![0.0f32; OUTPUT_CHUNK_SAMPLES];
+
+            for idx in 0..silence_chunks {
+                sender.send(InMsg::Audio { pcm: silence_chunk.clone() }).await?;
+
+                let remaining = silence_samples.saturating_sub(idx * OUTPUT_CHUNK_SAMPLES);
+                let sent = remaining.min(OUTPUT_CHUNK_SAMPLES);
+                samples_sent += sent;
+                if let Some(tx) = &progress_tx {
+                    let audio_elapsed = Duration::from_secs_f64(
+                        samples_sent as f64 / OUTPUT_SAMPLE_RATE_HZ as f64,
+                    );
+                    let _ = tx.try_send(ProgressUpdate {
+                        audio_elapsed,
+                        wall_elapsed: start.elapsed(),
+                    });
+                }
+
+                chunk_idx += 1;
+                if let Some(rtf) = rtf {
+                    let target = start + chunk_duration.mul_f64(chunk_idx as f64 / rtf);
+                    sleep_until(target).await;
+                }
+            }
+        }
+
         for input_chunk in pcm.chunks(FILE_INPUT_CHUNK_SAMPLES) {
             let samples = match resampler.as_mut() {
                 Some(resampler) => {
-                    resampler.process_into(input_chunk, &mut resample_buf);
+                    resampler.process_into(input_chunk, &mut resample_buf)?;
                     resample_buf.as_slice()
                 }
                 None => input_chunk,
@@ -701,7 +946,7 @@ async fn run_file(
         }
 
         if let Some(resampler) = resampler.as_mut() {
-            resampler.process_into(&[], &mut resample_buf);
+            resampler.flush_into(&mut resample_buf)?;
             if !resample_buf.is_empty() {
                 pending.extend_from_slice(&resample_buf);
             }
@@ -756,7 +1001,7 @@ async fn run_file(
         }
 
         sender.send(InMsg::Marker { id: marker_id }).await?;
-        kyutai_stt_client::Result::<()>::Ok(())
+        Ok(())
     });
 
     let stream_start = Instant::now();

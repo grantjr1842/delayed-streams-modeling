@@ -258,9 +258,16 @@ impl BatchedAsrInner {
             let mut markers = BinaryHeap::new();
             // This loop runs in real-time.
             let mut step_idx = 0;
+            let mut batch_pcm = vec![0f32; FRAME_SIZE * batch_size];
+            let mut channel_ids = vec![None; batch_size];
             loop {
-                let (batch_pcm, mask, ref_channel_ids) =
-                    self.pre_process(&mut state, step_idx, &mut markers);
+                let mask = self.pre_process(
+                    &mut state,
+                    step_idx,
+                    &mut markers,
+                    &mut batch_pcm,
+                    &mut channel_ids,
+                );
                 let with_data = mask.iter().filter(|v| **v).count();
                 if with_data > 0 {
                     let mask = moshi::StreamMask::new(mask, &dev)?;
@@ -295,7 +302,7 @@ impl BatchedAsrInner {
                     metrics::MODEL_STEP_DURATION.observe(elapsed);
                     tracing::info!(step_idx, with_data, "{:.2}ms", elapsed * 1000.);
                     step_idx += 1;
-                    self.post_process(asr_msgs, step_idx, &mut markers, &mask, &ref_channel_ids)?;
+                    self.post_process(asr_msgs, step_idx, &mut markers, &mask, &channel_ids)?;
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(2));
                 }
@@ -309,7 +316,9 @@ impl BatchedAsrInner {
         state: &mut moshi::asr::State,
         step_idx: usize,
         markers: &mut BinaryHeap<Marker>,
-    ) -> (Vec<f32>, Vec<bool>, Vec<Option<ChannelId>>) {
+        batch_pcm: &mut [f32],
+        channel_ids: &mut [Option<ChannelId>],
+    ) -> Vec<bool> {
         use rayon::prelude::*;
         enum Todo {
             Reset(usize),
@@ -317,8 +326,9 @@ impl BatchedAsrInner {
         }
 
         let mut mask = vec![false; state.batch_size()];
-        let mut channel_ids = vec![None; state.batch_size()];
-        let mut batch_pcm = vec![0f32; FRAME_SIZE * state.batch_size()];
+        for channel_id in channel_ids.iter_mut() {
+            *channel_id = None;
+        }
 
         let todo = batch_pcm
             .par_chunks_mut(FRAME_SIZE)
@@ -327,6 +337,7 @@ impl BatchedAsrInner {
             .zip(channel_ids.par_iter_mut())
             .enumerate()
             .flat_map(|(bid, (((out_pcm, channel_mutex), mask), channel_id_out))| -> Option<Todo> {
+                out_pcm.fill(0.0);
                 let mut guard = channel_mutex.lock().unwrap();
                 let channel = &mut *guard;
                 let c = channel.as_mut()?;
@@ -402,7 +413,7 @@ impl BatchedAsrInner {
             }
             Todo::Marker(m) => markers.push(m),
         });
-        (batch_pcm, mask, channel_ids)
+        mask
     }
 
     fn post_process(
@@ -686,6 +697,10 @@ impl BatchedAsr {
             Ok::<_, anyhow::Error>(())
         });
         crate::utils::spawn("send_loop", async move {
+            use bytes::BufMut;
+
+            let mut chunk_buf = bytes::BytesMut::with_capacity(8 * 1024);
+            let mut chunk_buf_spare = bytes::BytesMut::with_capacity(8 * 1024);
             let mut sender = sender;
             loop {
                 // The recv method is cancel-safe so can be wrapped in a timeout.
@@ -694,13 +709,18 @@ impl BatchedAsr {
                     Ok(None) => break,
                     Err(_) => ws::Message::Ping(vec![].into()),
                     Ok(Some(msg)) => {
-                        let mut buf = vec![];
-                        msg.serialize(
-                            &mut rmp_serde::Serializer::new(&mut buf)
-                                .with_human_readable()
-                                .with_struct_map(),
-                        )?;
-                        ws::Message::Binary(buf.into())
+                        chunk_buf.clear();
+                        {
+                            let mut w = (&mut chunk_buf).writer();
+                            msg.serialize(
+                                &mut rmp_serde::Serializer::new(&mut w)
+                                    .with_human_readable()
+                                    .with_struct_map(),
+                            )?;
+                        }
+                        std::mem::swap(&mut chunk_buf, &mut chunk_buf_spare);
+                        let bytes = chunk_buf_spare.split().freeze();
+                        ws::Message::Binary(bytes)
                     }
                 };
                 sender.send(msg).await?;

@@ -1,8 +1,10 @@
-use crate::audio::AudioChunk;
+use crate::audio::{AudioChunk, ResampleQuality};
 use crate::error::{Result, SttError};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
+#[cfg(feature = "hq-resample")]
+use rubato::Resampler;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -62,6 +64,119 @@ impl LinearResampler {
     }
 }
 
+#[cfg(feature = "hq-resample")]
+struct HqResampler {
+    resampler: rubato::FftFixedInOut<f32>,
+    pending: Vec<f32>,
+}
+
+#[cfg(feature = "hq-resample")]
+impl HqResampler {
+    const CHUNK_SIZE: usize = 1024;
+
+    fn new(in_rate_hz: u32, out_rate_hz: u32) -> Result<Self> {
+        let resampler = rubato::FftFixedInOut::<f32>::new(
+            in_rate_hz as usize,
+            out_rate_hz as usize,
+            Self::CHUNK_SIZE,
+            1,
+        )
+        .map_err(|e| SttError::Message(e.to_string()))?;
+
+        Ok(Self {
+            resampler,
+            pending: Vec::new(),
+        })
+    }
+
+    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
+        out.clear();
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        self.pending.extend_from_slice(input);
+        let chunk_size = self.resampler.input_frames_next();
+        if chunk_size == 0 {
+            return Ok(());
+        }
+
+        while self.pending.len() >= chunk_size {
+            let chunk = &self.pending[..chunk_size];
+            let resampled = self
+                .resampler
+                .process(&[chunk], None)
+                .map_err(|e| SttError::Message(e.to_string()))?;
+            if let Some(channel) = resampled.get(0) {
+                out.extend_from_slice(channel);
+            }
+            self.pending.drain(..chunk_size);
+        }
+
+        Ok(())
+    }
+}
+
+enum MicResampler {
+    Linear(LinearResampler),
+    #[cfg(feature = "hq-resample")]
+    High(HqResampler),
+}
+
+impl MicResampler {
+    fn new(in_rate_hz: u32, out_rate_hz: u32, quality: ResampleQuality) -> Result<Option<Self>> {
+        if in_rate_hz == out_rate_hz {
+            return Ok(None);
+        }
+
+        match quality {
+            ResampleQuality::Linear => Ok(Some(Self::Linear(LinearResampler::new(
+                in_rate_hz,
+                out_rate_hz,
+            )))),
+            ResampleQuality::High => {
+                #[cfg(feature = "hq-resample")]
+                {
+                    Ok(Some(Self::High(HqResampler::new(
+                        in_rate_hz,
+                        out_rate_hz,
+                    )?)))
+                }
+                #[cfg(not(feature = "hq-resample"))]
+                {
+                    Err(SttError::Message(
+                        "hq-resample feature is not enabled".to_string(),
+                    ))
+                }
+            }
+        }
+    }
+
+    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
+        match self {
+            MicResampler::Linear(resampler) => {
+                resampler.process_into(input, out);
+                Ok(())
+            }
+            #[cfg(feature = "hq-resample")]
+            MicResampler::High(resampler) => resampler.process_into(input, out),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MicCaptureConfig {
+    pub resample_quality: ResampleQuality,
+}
+
+impl Default for MicCaptureConfig {
+    fn default() -> Self {
+        Self {
+            resample_quality: ResampleQuality::Linear,
+        }
+    }
+}
+
 pub struct MicCapture {
     sample_rate_hz: u32,
     channels: u16,
@@ -71,28 +186,34 @@ pub struct MicCapture {
 
 impl MicCapture {
     pub fn start_default() -> Result<Self> {
+        Self::start_default_with_config(MicCaptureConfig::default())
+    }
+
+    pub fn start_default_with_config(config: MicCaptureConfig) -> Result<Self> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
             .ok_or_else(|| SttError::Message("no default input device available".to_string()))?;
 
-        let config = device
+        let input_config = device
             .default_input_config()
             .map_err(|e| SttError::Message(e.to_string()))?;
 
-        let input_sample_rate_hz = config.sample_rate().0;
-        let input_channels = config.channels();
-        let stream_config: StreamConfig = config.clone().into();
+        let input_sample_rate_hz = input_config.sample_rate().0;
+        let input_channels = input_config.channels();
+        let stream_config: StreamConfig = input_config.clone().into();
+        let resample_quality = config.resample_quality;
 
         let (tx, rx) = mpsc::channel::<AudioChunk>(8);
 
-        let stream = match config.sample_format() {
+        let stream = match input_config.sample_format() {
             SampleFormat::F32 => build_stream_f32(
                 &device,
                 &stream_config,
                 input_channels,
                 input_sample_rate_hz,
                 tx.clone(),
+                resample_quality,
             )?,
             SampleFormat::I16 => build_stream_i16(
                 &device,
@@ -100,6 +221,7 @@ impl MicCapture {
                 input_channels,
                 input_sample_rate_hz,
                 tx.clone(),
+                resample_quality,
             )?,
             SampleFormat::U16 => build_stream_u16(
                 &device,
@@ -107,6 +229,7 @@ impl MicCapture {
                 input_channels,
                 input_sample_rate_hz,
                 tx,
+                resample_quality,
             )?,
             other => {
                 return Err(SttError::Message(format!(
@@ -146,10 +269,11 @@ fn build_stream_f32(
     channels: u16,
     input_sample_rate_hz: u32,
     tx: mpsc::Sender<AudioChunk>,
+    resample_quality: ResampleQuality,
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
-    let mut resampler = (input_sample_rate_hz != OUTPUT_SAMPLE_RATE_HZ)
-        .then(|| LinearResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ));
+    let mut resampler =
+        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
     let mut mono_buf = Vec::<f32>::new();
     let mut resample_buf = Vec::<f32>::new();
     let mut pending = Vec::<f32>::new();
@@ -162,7 +286,10 @@ fn build_stream_f32(
                 downmix_f32_to_mono_into(data, channels_usize, &mut mono_buf);
                 let samples = match resampler.as_mut() {
                     Some(r) => {
-                        r.process_into(&mono_buf, &mut resample_buf);
+                        if let Err(err) = r.process_into(&mono_buf, &mut resample_buf) {
+                            warn!(error = %err, "mic resampling failed");
+                            return;
+                        }
                         resample_buf.as_slice()
                     }
                     None => mono_buf.as_slice(),
@@ -211,10 +338,11 @@ fn build_stream_i16(
     channels: u16,
     input_sample_rate_hz: u32,
     tx: mpsc::Sender<AudioChunk>,
+    resample_quality: ResampleQuality,
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
-    let mut resampler = (input_sample_rate_hz != OUTPUT_SAMPLE_RATE_HZ)
-        .then(|| LinearResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ));
+    let mut resampler =
+        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
     let mut mono_buf = Vec::<f32>::new();
     let mut resample_buf = Vec::<f32>::new();
     let mut pending = Vec::<f32>::new();
@@ -227,7 +355,10 @@ fn build_stream_i16(
                 downmix_i16_to_mono_into(data, channels_usize, &mut mono_buf);
                 let samples = match resampler.as_mut() {
                     Some(r) => {
-                        r.process_into(&mono_buf, &mut resample_buf);
+                        if let Err(err) = r.process_into(&mono_buf, &mut resample_buf) {
+                            warn!(error = %err, "mic resampling failed");
+                            return;
+                        }
                         resample_buf.as_slice()
                     }
                     None => mono_buf.as_slice(),
@@ -276,10 +407,11 @@ fn build_stream_u16(
     channels: u16,
     input_sample_rate_hz: u32,
     tx: mpsc::Sender<AudioChunk>,
+    resample_quality: ResampleQuality,
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
-    let mut resampler = (input_sample_rate_hz != OUTPUT_SAMPLE_RATE_HZ)
-        .then(|| LinearResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ));
+    let mut resampler =
+        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
     let mut mono_buf = Vec::<f32>::new();
     let mut resample_buf = Vec::<f32>::new();
     let mut pending = Vec::<f32>::new();
@@ -292,7 +424,10 @@ fn build_stream_u16(
                 downmix_u16_to_mono_into(data, channels_usize, &mut mono_buf);
                 let samples = match resampler.as_mut() {
                     Some(r) => {
-                        r.process_into(&mono_buf, &mut resample_buf);
+                        if let Err(err) = r.process_into(&mono_buf, &mut resample_buf) {
+                            warn!(error = %err, "mic resampling failed");
+                            return;
+                        }
                         resample_buf.as_slice()
                     }
                     None => mono_buf.as_slice(),

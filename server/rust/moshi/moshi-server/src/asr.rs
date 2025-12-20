@@ -260,22 +260,40 @@ impl Asr {
             tracing::info!("send loop exited");
             Ok::<(), anyhow::Error>(())
         });
+        // recv_loop and send_loop are already JoinHandle<()> from crate::utils::spawn
+        let mut recv_handle = recv_loop;
+        let mut send_handle = send_loop;
+        
         let sleep = tokio::time::sleep(std::time::Duration::from_secs(360));
         tokio::pin!(sleep);
-        // select should ensure that all the threads get aborted on timeout.
-        // TODO(laurent): this actually doesn't work as expected, and the background threads don't
-        // appear to be cancelled properly (at least the websocket connection remains open.
-        // laurent: Actually I guess this is because we wait for at least one of these to finish
-        // before exiting this task.
+        
+        // Use tokio::select! with proper abort handling for spawned tasks.
+        // When one branch completes or times out, we explicitly abort the other tasks.
         tokio::select! {
             _ = &mut sleep => {
-                tracing::error!("reached timeout");
+                tracing::error!("reached timeout, aborting background tasks");
+                recv_handle.abort();
+                send_handle.abort();
             }
-            _ = recv_loop => {
+            _ = &mut recv_handle => {
+                tracing::info!("recv_loop exited, aborting send_loop");
+                send_handle.abort();
             }
-            _ = send_loop => {
+            _ = &mut send_handle => {
+                tracing::info!("send_loop exited, aborting recv_loop");
+                recv_handle.abort();
             }
         }
+        
+        // Wait briefly for aborted tasks to clean up
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            async {
+                let _ = recv_handle.await;
+                let _ = send_handle.await;
+            }
+        ).await;
+        
         let (text_tokens, audio_tokens): (Vec<_>, Vec<_>) = log_rx.try_iter().unzip();
         let text_tokens = Tensor::cat(&text_tokens, candle::D::Minus1)?;
         let audio_tokens = Tensor::cat(&audio_tokens, candle::D::Minus1)?;

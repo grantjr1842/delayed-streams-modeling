@@ -72,16 +72,12 @@ impl AppStateInner {
             if prev_text_token == config.text_start_token {
                 self.text_tokenizer.decode_piece_ids(&[text_token]).ok()
             } else {
-                let prev_ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token]).ok();
-                let ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token, text_token]).ok();
-                prev_ids.and_then(|prev_ids| {
-                    ids.map(|ids| {
-                        if ids.len() > prev_ids.len() {
-                            ids[prev_ids.len()..].to_string()
-                        } else {
-                            String::new()
-                        }
-                    })
+                let prev_ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token]).ok()?;
+                let ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token, text_token]).ok()?;
+                Some(if ids.len() > prev_ids.len() {
+                    ids[prev_ids.len()..].to_string()
+                } else {
+                    String::new()
                 })
             }
         } else {
@@ -135,16 +131,14 @@ struct SessionSummary<'a> {
 
 impl SessionConfigReq {
     fn into_session_config(self) -> SessionConfig {
-        use rand::Rng;
-
         let repetition_penalty = self.repetition_penalty_context.zip(self.repetition_penalty);
         SessionConfig {
             text_temperature: self.text_temperature.unwrap_or(0.8),
             text_topk: self.text_topk.unwrap_or(250),
-            text_seed: self.text_seed.unwrap_or_else(|| rand::thread_rng().gen()),
+            text_seed: self.text_seed.unwrap_or_else(rand::random),
             audio_temperature: self.audio_temperature.unwrap_or(0.8),
             audio_topk: self.audio_topk.unwrap_or(250),
-            audio_seed: self.audio_seed.unwrap_or_else(|| rand::thread_rng().gen()),
+            audio_seed: self.audio_seed.unwrap_or_else(rand::random),
             email: self.email,
             user_feedback: None,
             max_steps: self.max_steps.unwrap_or(4500).min(4500),
@@ -463,58 +457,53 @@ impl StreamingModel {
         let (tx_o, rx_o) = std::sync::mpsc::channel::<Vec<u32>>();
         let sender = Arc::new(sender);
         let status = std::thread::scope(|s| {
-            s.spawn({
-                let mut mimi = mimi.clone();
-                let sender = sender.clone();
-                move || {
-                    'outer: while let Ok(in_pcm) = receiver.recv() {
-                        if in_pcm.is_empty() {
-                            continue;
-                        }
-                        let pcm_len = in_pcm.len();
-                        sender.send(StreamOut::InputPcm { pcm_len })?;
-                        let pcms = candle::Tensor::from_vec(
-                            in_pcm,
-                            (1, 1, pcm_len),
-                            &candle::Device::Cpu,
-                        )?;
-                        let audio_tokens = mimi.encode_step(&pcms.into(), &().into())?;
-                        let audio_tokens = match audio_tokens.as_option() {
-                            None => continue,
-                            Some(audio_tokens) => audio_tokens,
-                        };
-                        let (_one, _codebooks, steps) = audio_tokens.dims3()?;
-                        for step in 0..steps {
-                            let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
-                            if tx_i.send((codes, step)).is_err() {
-                                break 'outer;
-                            }
+            let mut mimi_encoder = mimi.clone();
+            let sender_encoder = Arc::clone(&sender);
+            s.spawn(move || {
+                'outer: while let Ok(in_pcm) = receiver.recv() {
+                    if in_pcm.is_empty() {
+                        continue;
+                    }
+                    let pcm_len = in_pcm.len();
+                    sender_encoder.send(StreamOut::InputPcm { pcm_len })?;
+                    let pcms = candle::Tensor::from_vec(
+                        in_pcm,
+                        (1, 1, pcm_len),
+                        &candle::Device::Cpu,
+                    )?;
+                    let audio_tokens = mimi_encoder.encode_step(&pcms.into(), &().into())?;
+                    let audio_tokens = match audio_tokens.as_option() {
+                        None => continue,
+                        Some(audio_tokens) => audio_tokens,
+                    };
+                    let (_one, _codebooks, steps) = audio_tokens.dims3()?;
+                    for step in 0..steps {
+                        let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
+                        if tx_i.send((codes, step)).is_err() {
+                            break 'outer;
                         }
                     }
-                    Ok::<_, anyhow::Error>(())
                 }
+                Ok::<_, anyhow::Error>(())
             });
-            s.spawn({
-                let cb = app_state.config.mimi_num_codebooks;
-                let sender = sender.clone();
-                move || {
-                    while let Ok(audio_tokens) = rx_o.recv() {
-                        let audio_tokens = {
-                            candle::Tensor::from_slice(
-                                &audio_tokens[..cb],
-                                (1, cb, 1),
-                                &candle::Device::Cpu,
-                            )?
-                        };
-                        tensor_tokens.push(audio_tokens.clone());
-                        let pcm = mimi.decode_step(&audio_tokens.into(), &().into())?;
-                        if let Some(pcm) = pcm.as_option() {
-                            let pcm = pcm.i((0, 0))?.to_vec1::<f32>()?;
-                            sender.send(StreamOut::Pcm { pcm })?;
-                        }
+            let cb = app_state.config.mimi_num_codebooks;
+            let sender_decoder = Arc::clone(&sender);
+            let mut mimi_decoder = mimi;
+            s.spawn(move || {
+                while let Ok(audio_tokens) = rx_o.recv() {
+                    let audio_tokens = candle::Tensor::from_slice(
+                        &audio_tokens[..cb],
+                        (1, cb, 1),
+                        &candle::Device::Cpu,
+                    )?;
+                    tensor_tokens.push(audio_tokens.clone());
+                    let pcm = mimi_decoder.decode_step(&audio_tokens.into(), &().into())?;
+                    if let Some(pcm) = pcm.as_option() {
+                        let pcm = pcm.i((0, 0))?.to_vec1::<f32>()?;
+                        sender_decoder.send(StreamOut::Pcm { pcm })?;
                     }
-                    Ok::<_, anyhow::Error>(())
                 }
+                Ok::<_, anyhow::Error>(())
             });
             sender.send(StreamOut::Ready)?;
             while let Ok((codes, step)) = rx_i.recv() {

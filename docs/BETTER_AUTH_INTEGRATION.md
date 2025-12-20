@@ -23,7 +23,7 @@ The moshi-server uses Better Auth for authentication:
 ```bash
 export BETTER_AUTH_SECRET="your-32-character-secret-here"
 
-moshi-server worker --config configs/config-stt-en-hf.toml
+moshi-server worker --config configs/stt/config-stt-en-hf.toml
 ```
 
 ## Better Auth Server Configuration

@@ -58,12 +58,12 @@ sudo apt install nsight-systems
 ```bash
 # Basic profiling
 nsys profile --output=moshi-profile \
-  moshi-server worker --config configs/config-stt-en-hf.toml
+  moshi-server worker --config configs/stt/config-stt-en-hf.toml
 
 # With CUDA API tracing
 nsys profile --trace=cuda,nvtx,osrt \
   --output=moshi-cuda-profile \
-  moshi-server worker --config configs/config-stt-en-hf.toml
+  moshi-server worker --config configs/stt/config-stt-en-hf.toml
 
 # Analyze results
 nsys stats moshi-profile.nsys-rep
@@ -80,11 +80,11 @@ nsys stats moshi-profile.nsys-rep
 
 ```bash
 # Basic profiling
-nvprof moshi-server worker --config configs/config-stt-en-hf.toml
+nvprof moshi-server worker --config configs/stt/config-stt-en-hf.toml
 
 # Detailed kernel analysis
 nvprof --metrics achieved_occupancy,sm_efficiency \
-  moshi-server worker --config configs/config-stt-en-hf.toml
+  moshi-server worker --config configs/stt/config-stt-en-hf.toml
 ```
 
 ## 4. Optimization Targets
@@ -180,7 +180,7 @@ Before optimization, establish baselines:
 
 ```bash
 # Create baseline measurements
-moshi-server worker --config configs/config-stt-en-hf.toml &
+moshi-server worker --config configs/stt/config-stt-en-hf.toml &
 
 # Run test workload
 # Record:

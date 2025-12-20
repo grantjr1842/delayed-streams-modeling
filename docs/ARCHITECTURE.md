@@ -111,11 +111,16 @@ The delayed-streams-modeling project implements real-time Speech-to-Text (STT) a
 
 **Purpose**: Standalone STT client for testing and batch processing.
 
+**Subcommands**:
+- `file`: Local inference on audio files using downloaded model weights
+- `mic`: Real-time microphone streaming to a moshi-server via WebSocket
+
 **Features**:
-- File-based transcription
-- Real-time microphone input
+- File-based transcription (local inference)
+- Real-time microphone input (server streaming)
 - Word-level timestamps
 - Semantic VAD output
+- Automatic JWT token generation from BETTER_AUTH_SECRET
 
 #### tts-rs (Rust CLI)
 
@@ -254,12 +259,12 @@ localhost:8080 - moshi-server (Rust)
 
 ### Configuration Files
 
-**moshi-server** (`configs/*.toml`):
-- `config-stt-en-hf.toml`: English STT (2.6B model)
-- `config-stt-en_fr-hf.toml`: English/French STT (1B model)
-- `config-tts.toml`: High-quality TTS (n_q=16)
-- `config-tts-fast.toml`: Fast TTS (n_q=4)
-- `config-tts-realtime.toml`: Real-time TTS (n_q=8)
+**moshi-server** (`configs/stt/*.toml`, `configs/tts/*.toml`):
+- `configs/stt/config-stt-en-hf.toml`: English STT (2.6B model)
+- `configs/stt/config-stt-en_fr-hf.toml`: English/French STT (1B model)
+- `configs/tts/config-tts.toml`: High-quality TTS (n_q=16)
+- `configs/tts/config-tts-fast.toml`: Fast TTS (n_q=4)
+- `configs/tts/config-tts-realtime.toml`: Real-time TTS (n_q=8)
 
 Each config specifies:
 - Model paths (Hugging Face repos or local files)
@@ -374,7 +379,7 @@ This prevents CUDA_ERROR_OUT_OF_MEMORY on GPUs with limited VRAM (e.g., RTX 2070
 - Check user approval status in database
 
 **Glitchy/Distorted TTS Audio**:
-- Use faster config (`config-tts-fast.toml`)
+- Use faster config (`configs/tts/config-tts-fast.toml`)
 - Increase client prebuffer
 - Check Real-Time Factor (RTF) metrics
 

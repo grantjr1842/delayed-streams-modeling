@@ -35,6 +35,9 @@ delayed-streams-modeling/
 │   ├── token-gen/       # JWT token generator
 │   └── tts-client/      # Rust TTS WebSocket client
 ├── configs/             # Configuration files
+│   ├── stt/             # STT server configs
+│   ├── tts/             # TTS server configs
+│   └── models/          # Model JSON presets
 ├── ops/                 # Operational and deployment scripts
 ├── docs/                # Documentation
 └── audio/               # Sample audio files
@@ -94,12 +97,12 @@ cargo install --features cuda moshi-server
 For detailed compilation instructions and troubleshooting for 8GB VRAM cards (e.g. RTX 2070), see [docs/MOSHI_SERVER_SETUP.md](docs/MOSHI_SERVER_SETUP.md).
 
 Then the server can be started via the following command using the config file
-from this repository.
-For `kyutai/stt-1b-en_fr`, use `configs/config-stt-en_fr.hf.toml`,
-and for `kyutai/stt-2.6b-en`, use `configs/config-stt-en-hf.toml`,
+from this repository. Configs live under `configs/stt/` (see `configs/README.md`).
+For `kyutai/stt-1b-en_fr`, use `configs/stt/config-stt-en_fr-hf.toml`,
+and for `kyutai/stt-2.6b-en`, use `configs/stt/config-stt-en-hf.toml`,
 
 ```bash
-moshi-server worker --config configs/config-stt-en_fr-hf.toml
+moshi-server worker --config configs/stt/config-stt-en_fr-hf.toml
 ```
 
 Once the server has started, use the Rust clients in `client/rust` or the
@@ -154,13 +157,14 @@ Once installed, the server can be started via the following command using the co
 from this repository.
 
 ```bash
-moshi-server worker --config configs/config-tts.toml
+moshi-server worker --config configs/tts/config-tts.toml
 ```
 
 Once the server has started, use the Rust clients in `client/rust` or the
 WebSocket helper in `tools/tts-client` to connect.
 
-You can configure the server by modifying `configs/config-tts.toml`. See comments in that file to see what options are available.
+You can configure the server by modifying `configs/tts/config-tts.toml`. See comments in that file to see what options are available.
+TTS configs live under `configs/tts/` (see `configs/README.md` for layout).
 </details>
 
 ## FAQ

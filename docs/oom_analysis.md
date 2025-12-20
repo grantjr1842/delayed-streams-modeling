@@ -1,16 +1,16 @@
 # OOM Analysis for Moshi Server
 
 ## Incident
-User reported `CUDA_ERROR_OUT_OF_MEMORY` on RTX 2070 (8GB) when using `config-stt-en_fr-hf.toml`.
+User reported `CUDA_ERROR_OUT_OF_MEMORY` on RTX 2070 (8GB) when using `configs/stt/config-stt-en_fr-hf.toml`.
 
 ## Configuration Comparison
 
-### HF Config (`config-stt-en_fr-hf.toml`)
+### HF Config (`configs/stt/config-stt-en_fr-hf.toml`)
 - Model: `hf://kyutai/stt-1b-en_fr-candle/model.safetensors`
 - DType: Auto-detect (Resolves to "f16" on Turing/SM7.5)
 - Batch Size: 64 (Auto-adjusted)
 
-### Low-RAM Config (`config-stt-en_fr-lowram-sm75.toml`)
+### Low-RAM Config (`configs/stt/config-stt-en_fr-lowram-sm75.toml`)
 - Model: `assets/fp16/stt-1b-en_fr-candle.fp16.safetensors`
 - DType: "f32" (Explicit override)
 - Batch Size: 4 (Auto-adjusted)

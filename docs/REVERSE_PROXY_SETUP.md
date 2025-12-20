@@ -140,7 +140,7 @@ systemctl show caddy --property=Restart,RestartSec,WatchdogSec
    If using Better Auth for authentication:
 
    ```bash
-   cd moshi/auth-server
+   cd server/typescript/auth-server
    pnpm dev  # Runs on port 3001
    ```
 

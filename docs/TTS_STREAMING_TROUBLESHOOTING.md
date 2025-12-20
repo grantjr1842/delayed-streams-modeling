@@ -30,17 +30,17 @@ cd client/rust/tts-rs && cargo run --release -- \
 ```
 
 #### Recommended Fix (Server Restart Required)
-Use a config optimized for real-time performance:
+Use a config optimized for real-time performance (configs live under `configs/tts/`):
 
 | Config File | n_q | batch_size | Expected RTF | Quality |
 |-------------|-----|------------|--------------|---------|
-| `config-tts-fast.toml` | 4 | 2 | ~0.5-0.8 | Lower |
-| `config-tts-realtime.toml` | 8 | 1 | ~1.0-1.5 | Medium |
-| `config-tts.toml` | 16 | 4 | ~2.0-2.5 | High |
+| `configs/tts/config-tts-fast.toml` | 4 | 2 | ~0.5-0.8 | Lower |
+| `configs/tts/config-tts-realtime.toml` | 8 | 1 | ~1.0-1.5 | Medium |
+| `configs/tts/config-tts.toml` | 16 | 4 | ~2.0-2.5 | High |
 
 ```bash
 # Start server with fast config
-./run-moshi-server.sh configs/config-tts-fast.toml
+./run-moshi-server.sh configs/tts/config-tts-fast.toml
 ```
 
 #### Long-term Fix

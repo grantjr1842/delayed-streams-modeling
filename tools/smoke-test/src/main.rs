@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Path to the config file.
-    #[arg(long, default_value = "configs/config-stt-en_fr-lowram-sm75.toml")]
+    #[arg(long, default_value = "configs/stt/config-stt-en_fr-lowram-sm75.toml")]
     config: PathBuf,
 
     /// moshi-server binary to execute.

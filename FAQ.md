@@ -4,6 +4,12 @@ Here is the answer to a number of frequently asked questions.
 
 ### Issues installing the sentencepiece dependency
 
+The build uses the system sentencepiece library; make sure `pkg-config` can
+locate it (e.g., `pkg-config --cflags sentencepiece`). If that fails, install
+sentencepiece or add its `pkgconfig` directory to `PKG_CONFIG_PATH`. You can
+also run `ops/setup-sentencepiece.sh` to build a local shared install and print
+the required environment variables.
+
 On some linux distributions (arch) or on macos, the local version of cmake can
 be too recent for the sentencepiece dependency.
 
@@ -33,4 +39,3 @@ Alternatively you can set `CXXFLAGS="-include cstdint"`, see this
 Some finetuning code can be found in the [kyutai-labs/moshi-finetune repo](https://github.com/kyutai-labs/moshi-finetune).
 This code has not been adapted to the Speech-To-Text and Text-To-Speech models
 yet, but it should be a good starting point.
-

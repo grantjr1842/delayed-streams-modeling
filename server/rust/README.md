@@ -25,13 +25,13 @@ Start the moshi-server with a configuration file:
 
 ```bash
 cd server/rust/moshi
-cargo run --bin moshi-server -- worker --config ../../../configs/config-tts.toml
+cargo run --bin moshi-server -- worker --config ../../../configs/tts/config-tts.toml
 ```
 
 Or if you've installed the binary:
 
 ```bash
-moshi-server worker --config configs/config-tts.toml
+moshi-server worker --config configs/tts/config-tts.toml
 ```
 
 ## Testing

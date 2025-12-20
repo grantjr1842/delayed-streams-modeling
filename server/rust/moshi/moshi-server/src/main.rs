@@ -718,7 +718,61 @@ async fn main_() -> Result<()> {
                 let per_batch_item_mb: u64 = std::env::var("MOSHI_PER_BATCH_ITEM_MB")
                     .ok()
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(utils::DEFAULT_PER_BATCH_ITEM_MB);
+                    .unwrap_or_else(|| {
+                        let mut estimated: Option<u64> = None;
+                        for (module_name, module_cfg) in config.modules.iter() {
+                            let (model_cfg, dtype_override) = match module_cfg {
+                                ModuleConfig::BatchedAsr { config: c, .. } => {
+                                    (Some(&c.model), c.dtype_override.as_deref())
+                                }
+                                ModuleConfig::Asr { config: c, .. } => {
+                                    (Some(&c.model), c.dtype_override.as_deref())
+                                }
+                                ModuleConfig::Tts { config: c, .. } => {
+                                    (Some(&c.model), c.dtype_override.as_deref())
+                                }
+                                ModuleConfig::Lm { config: c, .. } => {
+                                    (Some(&c.model), c.dtype_override.as_deref())
+                                }
+                                _ => (None, None),
+                            };
+                            let model_cfg = match model_cfg {
+                                Some(model_cfg) => model_cfg,
+                                None => continue,
+                            };
+                            let dtype_label = dtype_override.unwrap_or(auto_dtype);
+                            let dtype_bytes = match dtype_label {
+                                "bf16" | "f16" => 2,
+                                _ => 4,
+                            };
+                            let estimate = utils::estimate_per_batch_item_mb(
+                                model_cfg,
+                                dtype_bytes,
+                                Some(&gpu_info),
+                            );
+                            tracing::debug!(
+                                module = module_name,
+                                dtype = dtype_label,
+                                raw_kv_mb = estimate.raw_kv_mb,
+                                overhead_multiplier = estimate.overhead_multiplier,
+                                per_batch_item_mb = estimate.estimated_mb,
+                                "Estimated per-batch memory"
+                            );
+                            estimated = Some(
+                                estimated
+                                    .map_or(estimate.estimated_mb, |v| v.max(estimate.estimated_mb)),
+                            );
+                        }
+                        if let Some(estimated) = estimated {
+                            tracing::info!(
+                                per_batch_item_mb = estimated,
+                                "Using estimated per-batch memory; override with MOSHI_PER_BATCH_ITEM_MB"
+                            );
+                            estimated
+                        } else {
+                            utils::DEFAULT_PER_BATCH_ITEM_MB
+                        }
+                    });
 
                 // Calculate batch size with detailed breakdown
                 let batch_calc =

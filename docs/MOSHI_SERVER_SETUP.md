@@ -59,7 +59,7 @@ BETTER_AUTH_SECRET=your_jwt_secret_here
 
 Then run the server directly:
 ```bash
-moshi-server worker --config configs/config-stt-en-hf.toml
+moshi-server worker --config configs/stt/config-stt-en-hf.toml
 ```
 
 The `.env` file is loaded before any configuration parsing, so all environment variables are available for config resolution.
@@ -109,7 +109,7 @@ When using JWT authentication (Better Auth), the server validates the user's app
 
 ## 5. Configuration Files
 
-- **`configs/config-stt-en_fr-lowram-sm75.toml`**:
+- **`configs/stt/config-stt-en_fr-lowram-sm75.toml`**:
   - Created a specific configuration for this setup.
   - Uses `backend = "cuda"`.
   - Adjusts model paths to local cached assets.

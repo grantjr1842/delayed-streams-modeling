@@ -29,7 +29,7 @@ struct DeviceCapability {
 const AMPERE_MAJOR: i32 = 8;
 const CONVERTER_CMD: &str =
     "cargo run --bin sm75-prep -- --output assets/fp16/stt-1b-en_fr-candle.fp16.safetensors";
-const SM75_CONFIG: &str = "configs/config-stt-en_fr-lowram-sm75.toml";
+const SM75_CONFIG: &str = "configs/stt/config-stt-en_fr-lowram-sm75.toml";
 
 fn main() -> Result<ExitCode> {
     let cli = Cli::parse();

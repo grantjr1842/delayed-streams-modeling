@@ -417,6 +417,97 @@ pub const DEFAULT_MODEL_PARAMS_BILLIONS: f64 = 1.0;
 /// Mimi (~200M params) + decoder + buffers roughly take 1GB in F32.
 pub const DEFAULT_MIMI_ESTIMATE_MB: u64 = 1024;
 
+/// Estimated per-batch memory usage in MB, including overhead.
+#[derive(Debug, Clone, Copy)]
+pub struct PerBatchEstimate {
+    pub raw_kv_mb: u64,
+    pub overhead_multiplier: f64,
+    pub estimated_mb: u64,
+}
+
+/// Estimates per-batch memory usage based on model config and GPU profile.
+/// The estimate is primarily KV cache size with a tuned safety multiplier.
+pub fn estimate_per_batch_item_mb(
+    model: &moshi::lm::Config,
+    dtype_bytes: u64,
+    gpu_info: Option<&GpuInfo>,
+) -> PerBatchEstimate {
+    let transformer = &model.transformer;
+    let head_dim = transformer
+        .head_dim
+        .unwrap_or_else(|| transformer.d_model / transformer.num_heads);
+
+    let kv_per_layer_elems = 2u64
+        * transformer.context as u64
+        * transformer.num_heads as u64
+        * head_dim as u64;
+    let kv_elems = kv_per_layer_elems.saturating_mul(transformer.num_layers as u64);
+    let kv_bytes = kv_elems.saturating_mul(dtype_bytes);
+
+    let depformer_bytes = model
+        .depformer
+        .as_ref()
+        .map(|depformer| {
+            let dep_cfg = &depformer.transformer;
+            let dep_head_dim = dep_cfg
+                .head_dim
+                .unwrap_or_else(|| dep_cfg.d_model / dep_cfg.num_heads);
+            let dep_kv_per_layer_elems = 2u64
+                * dep_cfg.context as u64
+                * dep_cfg.num_heads as u64
+                * dep_head_dim as u64;
+            let dep_kv_elems = dep_kv_per_layer_elems.saturating_mul(dep_cfg.num_layers as u64);
+            dep_kv_elems.saturating_mul(dtype_bytes)
+        })
+        .unwrap_or(0);
+
+    let raw_bytes = kv_bytes.saturating_add(depformer_bytes);
+    let raw_kv_mb = (raw_bytes / (1024 * 1024)).max(1);
+    let overhead_multiplier = estimate_safety_multiplier(model, gpu_info);
+    let estimated_mb = ((raw_kv_mb as f64) * overhead_multiplier).ceil() as u64;
+
+    PerBatchEstimate {
+        raw_kv_mb,
+        overhead_multiplier,
+        estimated_mb: estimated_mb.max(1),
+    }
+}
+
+fn estimate_safety_multiplier(model: &moshi::lm::Config, gpu_info: Option<&GpuInfo>) -> f64 {
+    let transformer = &model.transformer;
+    let mut multiplier: f64 = 1.3;
+
+    if transformer.context >= 4096 {
+        multiplier += 0.1;
+    }
+    if transformer.context >= 8192 {
+        multiplier += 0.1;
+    }
+    if transformer.d_model >= 4096 || transformer.num_layers >= 32 {
+        multiplier += 0.2;
+    } else if transformer.d_model >= 3072 || transformer.num_layers >= 24 {
+        multiplier += 0.1;
+    }
+    if model.depformer.is_some() {
+        multiplier += 0.1;
+    }
+
+    if let Some(gpu) = gpu_info {
+        let total_vram_mb = gpu.total_vram_mb();
+        if total_vram_mb <= 8 * 1024 {
+            multiplier += 0.2;
+        } else if total_vram_mb <= 12 * 1024 {
+            multiplier += 0.1;
+        } else if total_vram_mb >= 48 * 1024 {
+            multiplier -= 0.2;
+        } else if total_vram_mb >= 24 * 1024 {
+            multiplier -= 0.1;
+        }
+    }
+
+    multiplier.clamp(1.1, 2.0)
+}
+
 // ============================================================================
 // GPU Information Struct
 // ============================================================================

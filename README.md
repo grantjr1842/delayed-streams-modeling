@@ -23,15 +23,17 @@ delayed-streams-modeling/
 │       ├── moshi/       # Core moshi Python package
 │       └── moshi_mlx/   # MLX implementation
 ├── client/              # Client/frontend components
-│   └── rust/            # Rust client applications
-│       ├── stt-rs/      # STT standalone client
-│       └── tts-rs/      # TTS standalone client
+│   ├── rust/            # Rust client applications
+│   │   ├── stt-rs/      # STT standalone client
+│   │   └── tts-rs/      # TTS standalone client
+│   └── python/          # Python client applications
 ├── tools/               # Development tools
-│   ├── notebooks/       # Jupyter notebooks
 │   ├── benchmarks/      # Performance benchmarks
+│   ├── research/        # Research and experimentation scripts
+│   ├── deprecated-python/ # Legacy Python scripts
 │   └── quant_bench/     # Quantization benchmarking
 ├── configs/             # Configuration files
-├── scripts/             # Utility scripts
+├── ops/                 # Operational and deployment scripts
 ├── docs/                # Documentation
 └── audio/               # Sample audio files
 ```
@@ -105,21 +107,21 @@ Additionally, we provide two scripts that highlight different usage scenarios. T
 
 ```bash
 uv run \
-  scripts/stt_from_file_pytorch.py \
+  tools/research/stt_from_file_pytorch.py \
   --hf-repo kyutai/stt-2.6b-en \
   audio/bria.mp3
 ```
 
 The second script can be used to run a model on an existing Hugging Face dataset and calculate its performance metrics: 
 ```bash
-uv run scripts/stt_evaluate_on_dataset.py  \
+uv run tools/research/stt_evaluate_on_dataset.py  \
   --dataset meanwhile  \
   --hf-repo kyutai/stt-2.6b-en
 ```
 
 Another example shows how one can provide a text-, audio-, or text-audio prompt to our STT model:
 ```bash
-uv run scripts/stt_from_file_with_prompt_pytorch.py \
+uv run tools/research/stt_from_file_with_prompt_pytorch.py \
   --hf-repo kyutai/stt-2.6b-en \
   --file audio/bria.mp3 \
   --prompt_file audio/loona.mp3 \
@@ -169,12 +171,12 @@ moshi-server worker --config configs/config-stt-en_fr-hf.toml
 
 Once the server has started you can transcribe audio from your microphone with the following script.
 ```bash
-uv run scripts/stt_from_mic_rust_server.py
+uv run client/python/stt_mic_client.py
 ```
 
 We also provide a script for transcribing from an audio file.
 ```bash
-uv run scripts/stt_from_file_rust_server.py audio/bria.mp3
+uv run client/python/stt_file_client.py audio/bria.mp3
 ```
 
 The script limits the decoding speed to simulate real-time processing of the audio. 
@@ -231,7 +233,7 @@ and just prefix the command above with `uvx --with moshi-mlx`.
 If you want to transcribe audio from your microphone, use:
 
 ```bash
-python scripts/stt_from_mic_mlx.py
+python tools/research/stt_from_mic_mlx.py
 ```
 
 The MLX models can also be used in swift using the [moshi-swift
@@ -267,10 +269,10 @@ Check out our [Colab notebook](https://colab.research.google.com/github/kyutai-l
 
 ```bash
 # From stdin, plays audio immediately
-echo "Hey, how are you?" | python scripts/tts_pytorch.py - -
+echo "Hey, how are you?" | python tools/research/tts_pytorch.py - -
 
 # From text file to audio file
-python scripts/tts_pytorch.py text_to_say.txt audio_output.wav
+python tools/research/tts_pytorch.py text_to_say.txt audio_output.wav
 ```
 
 The `tts_pytorch.py` script waits for all the text to be available before
@@ -278,7 +280,7 @@ starting the audio generation. A fully streaming implementation is available in
 the `tts_pytorch_streaming.py` script, which can be used as follows:
 
 ```bash
-echo "Hey, how are you?" | python scripts/tts_pytorch_streaming.py audio_output.wav
+echo "Hey, how are you?" | python tools/research/tts_pytorch_streaming.py audio_output.wav
 ```
 
 This requires the [moshi package](https://pypi.org/project/moshi/), which can be installed via pip.
@@ -311,10 +313,10 @@ moshi-server worker --config configs/config-tts.toml
 Once the server has started you can connect to it using our script as follows:
 ```bash
 # From stdin, plays audio immediately
-echo "Hey, how are you?" | python scripts/tts_rust_server.py - -
+echo "Hey, how are you?" | python client/python/tts_client.py - -
 
 # From text file to audio file
-python scripts/tts_rust_server.py text_to_say.txt audio_output.wav
+python client/python/tts_client.py text_to_say.txt audio_output.wav
 ```
 
 You can configure the server by modifying `configs/config-tts.toml`. See comments in that file to see what options are available.
@@ -334,10 +336,10 @@ the model resulting in faster inference.
 
 ```bash
 # From stdin, plays audio immediately
-echo "Hey, how are you?" | python scripts/tts_mlx.py - - --quantize 8
+echo "Hey, how are you?" | python tools/research/tts_mlx.py - - --quantize 8
 
 # From text file to audio file
-python scripts/tts_mlx.py text_to_say.txt audio_output.wav
+python tools/research/tts_mlx.py text_to_say.txt audio_output.wav
 ```
 
 This requires the [moshi-mlx package](https://pypi.org/project/moshi-mlx/), which can be installed via pip.
@@ -359,7 +361,7 @@ Recommended workflow for pre-Ampere (SM75 and earlier) cards:
 
 ```bash
 uv run --with torch --with huggingface_hub --with safetensors \
-  scripts/prep_sm75_assets.py
+  tools/deprecated-python/prep_sm75_assets.py
 ```
 
    Use `--simulate sm75 --dry-run` when testing on a CPU-only machine or in CI.
@@ -367,17 +369,17 @@ uv run --with torch --with huggingface_hub --with safetensors \
    capability helper directly:
 
 ```bash
-uv run --with torch scripts/check_gpu_capability.py
+uv run --with torch tools/deprecated-python/check_gpu_capability.py
 ```
 
 2. Use `configs/config-stt-en_fr-lowram-sm75.toml`, which is pre-configured to load the fp16 asset and override the dtype.
-3. Run `python scripts/format_moshi_log.py logs/moshi-logs/raw/log.config-stt-en_fr-lowram-sm75.2025-11-15` (or point the helper at your own raw trace) to generate `logs/moshi-logs/log.config-stt-en_fr-lowram-sm75.2025-11-15`.
+3. Run `python tools/deprecated-python/format_moshi_log.py logs/moshi-logs/raw/log.config-stt-en_fr-lowram-sm75.2025-11-15` (or point the helper at your own raw trace) to generate `logs/moshi-logs/log.config-stt-en_fr-lowram-sm75.2025-11-15`.
    The formatter strips ANSI clutter, normalizes stray control characters, and renders UTC timestamps as local 12-hour times so the friendly log (along with the raw trace in `logs/moshi-logs/raw/log.foo.2025-11-15`) documents the `CUDA_ERROR_NOT_FOUND` failure path that occurs when the converted checkpoint is unavailable, helping you verify conversion is required before the worker can stay on CUDA.
-4. (Optional) Run `scripts/run_sm75_smoke_test.py` to launch (or simulate) `moshi-server worker --config configs/config-stt-en_fr-lowram-sm75.toml` and confirm CUDA stays up. CI exercises this via `--simulate-success`, while operators on real GPUs can omit the flag to test their runtime.
+4. (Optional) Run `tools/deprecated-python/run_sm75_smoke_test.py` to launch (or simulate) `moshi-server worker --config configs/config-stt-en_fr-lowram-sm75.toml` and confirm CUDA stays up. CI exercises this via `--simulate-success`, while operators on real GPUs can omit the flag to test their runtime.
 5. (Optional) Publish your sanitized logs to S3 so collaborators can inspect them without copying files manually:
 
 ```bash
-uv run --with boto3 scripts/publish_logs_to_s3.py \
+uv run --with boto3 tools/deprecated-python/publish_logs_to_s3.py \
   --bucket my-moshi-logs \
   --prefix "operators/$USER" \
   --source logs/moshi-logs \

@@ -13,7 +13,7 @@ This document provides guidance on resolving audio streaming issues with the mos
 **Diagnosis**:
 ```bash
 # Run benchmark to check RTF
-./scripts/tts_rtf_bench.sh ws://127.0.0.1:8080 5
+./tools/benchmarks/tts_rtf_bench.sh ws://127.0.0.1:8080 5
 ```
 
 Expected output metrics:
@@ -74,10 +74,10 @@ Higher = more concurrent connections, slower per-request
 
 ```bash
 # Check WAV files for corruption
-python scripts/tts_audio_integrity_check.py tmp/tts/
+python client/python/integrity_check.py tmp/tts/
 
 # Run full benchmark suite
-./scripts/tts_rtf_bench.sh ws://127.0.0.1:8080 5
+./tools/benchmarks/tts_rtf_bench.sh ws://127.0.0.1:8080 5
 ```
 
 ## Related Issues

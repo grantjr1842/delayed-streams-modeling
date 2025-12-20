@@ -4,6 +4,7 @@ use crate::transcript::TranscriptAssembler;
 use crate::types::{SttEvent, Utterance};
 
 use futures_util::{SinkExt, StreamExt};
+use futures_util::stream::SplitStream;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -19,6 +20,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type WsRead = SplitStream<WsStream>;
 
 const SHUTDOWN_FLUSH_MARKER_ID: i64 = i64::MIN + 1;
 const SHUTDOWN_FLUSH_CHUNK_SAMPLES: usize = 1920;
@@ -30,6 +32,12 @@ enum SendCmd {
     Msg(InMsg),
     Raw(Vec<u8>),
     Close,
+}
+
+enum RecvOutcome {
+    Closed { code: u16, reason: String },
+    Error(String),
+    Eof,
 }
 
 fn is_retryable_close_code(code: u16) -> bool {
@@ -84,6 +92,52 @@ async fn connect_ws(
         .map_err(|e| SttError::Message(e.to_string()))?;
 
     Ok(ws_stream)
+}
+
+fn spawn_recv_task(
+    mut ws_read: WsRead,
+    out_tx: mpsc::Sender<OutMsg>,
+) -> mpsc::Receiver<RecvOutcome> {
+    let (done_tx, done_rx) = mpsc::channel(1);
+
+    tokio::spawn(async move {
+        let outcome = loop {
+            let Some(item) = ws_read.next().await else {
+                break RecvOutcome::Eof;
+            };
+
+            let msg = match item {
+                Ok(msg) => msg,
+                Err(e) => break RecvOutcome::Error(format!("websocket transport error: {e}")),
+            };
+
+            match msg {
+                Message::Binary(bytes) => {
+                    let out = match decode_out_msg(bytes.as_ref()) {
+                        Ok(out) => out,
+                        Err(e) => break RecvOutcome::Error(format!("protocol decode error: {e}")),
+                    };
+
+                    if out_tx.send(out).await.is_err() {
+                        break RecvOutcome::Error("recv consumer dropped".to_string());
+                    }
+                }
+                Message::Close(frame) => {
+                    let (code, reason) = if let Some(frame) = frame {
+                        (frame.code.into(), frame.reason.to_string())
+                    } else {
+                        (1000u16, String::new())
+                    };
+                    break RecvOutcome::Closed { code, reason };
+                }
+                _ => {}
+            }
+        };
+
+        let _ = done_tx.send(outcome).await;
+    });
+
+    done_rx
 }
 
 #[cfg(test)]
@@ -235,8 +289,8 @@ impl SttClientBuilder {
             let reconnect_delay = reconnect_delay;
 
             let mut ws_write = ws_write;
-            let mut ws_read = ws_read;
             let mut reconnect_attempts = 0usize;
+            let mut recv_done_rx = spawn_recv_task(ws_read, out_tx.clone());
 
             loop {
                 tokio::select! {
@@ -266,49 +320,13 @@ impl SttClientBuilder {
                             }
                         }
                     }
-                    item = ws_read.next() => {
-                        let Some(item) = item else {
+                    outcome = recv_done_rx.recv() => {
+                        let Some(outcome) = outcome else {
                             break;
                         };
 
-                        let msg = match item {
-                            Ok(msg) => msg,
-                            Err(e) => {
-                                let _ = out_tx
-                                    .send(OutMsg::Error {
-                                        message: format!("websocket transport error: {e}"),
-                                    })
-                                    .await;
-                                break;
-                            }
-                        };
-
-                        match msg {
-                            Message::Binary(bytes) => {
-                                let out = match decode_out_msg(bytes.as_ref()) {
-                                    Ok(out) => out,
-                                    Err(e) => {
-                                        let _ = out_tx
-                                            .send(OutMsg::Error {
-                                                message: format!("protocol decode error: {e}"),
-                                            })
-                                            .await;
-                                        break;
-                                    }
-                                };
-
-                                out_tx
-                                    .send(out)
-                                    .await
-                                    .map_err(|_| SttError::Message("recv consumer dropped".to_string()))?;
-                            }
-                            Message::Close(frame) => {
-                                let (code, reason) = if let Some(frame) = frame {
-                                    (frame.code.into(), frame.reason.to_string())
-                                } else {
-                                    (1000u16, String::new())
-                                };
-
+                        match outcome {
+                            RecvOutcome::Closed { code, reason } => {
                                 if code != 1000 {
                                     let message = close_code_message(code, &reason);
                                     if auto_reconnect
@@ -344,20 +362,26 @@ impl SttClientBuilder {
 
                                         let (new_write, new_read) = ws_stream.split();
                                         ws_write = new_write;
-                                        ws_read = new_read;
+                                        recv_done_rx = spawn_recv_task(new_read, out_tx.clone());
                                         continue;
                                     }
 
                                     let _ = out_tx
-                                        .send(OutMsg::Error {
-                                            message,
-                                        })
+                                        .send(OutMsg::Error { message })
                                         .await;
                                 }
 
                                 break;
                             }
-                            _ => {}
+                            RecvOutcome::Error(message) => {
+                                let _ = out_tx
+                                    .send(OutMsg::Error { message })
+                                    .await;
+                                break;
+                            }
+                            RecvOutcome::Eof => {
+                                break;
+                            }
                         }
                     }
                 }

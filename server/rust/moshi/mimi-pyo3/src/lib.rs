@@ -85,6 +85,9 @@ fn mimi_cfg(num_codebooks: usize, max_seq_len: Option<usize>) -> mimi::Config {
         cross_attention: None,
         shared_cross_attn: true,
         max_seq_len: max_seq_len.unwrap_or(8192), // the transformer works at 25hz so this is ~5 mins.
+        gating_idx: None,
+        head_dim: None,
+        shared_cross_attn_heads: None,
     };
     mimi::Config {
         channels: 1,

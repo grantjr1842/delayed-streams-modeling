@@ -72,7 +72,7 @@ pub mod client {
         }
 
         pub async fn send_control(&mut self, control: u8) -> Result<()> {
-            let msg = Message::Binary(vec![3u8, control]);
+            let msg = Message::Binary(vec![3u8, control].into());
             self.sender.send(msg).await?;
             Ok(())
         }
@@ -103,7 +103,7 @@ pub mod client {
                 let data = self.pw.inner_mut();
                 if !data.is_empty() {
                     let msg: Vec<u8> = [&[1u8], data.as_slice()].concat();
-                    let msg = Message::Binary(msg);
+                    let msg = Message::Binary(msg.into());
                     self.sender.send(msg).await?;
                     data.clear();
                 }
@@ -287,18 +287,18 @@ pub mod client_tui {
     }
 
     fn ui(f: &mut Frame, app: &mut App) {
-        let area = f.size();
-        let instructions = block::Title::from(Line::from(vec![
+        let area = f.area();
+        let instructions = Line::from(vec![
             " Quit ".into(),
             "<Q> ".yellow().bold(),
             " Restart ".into(),
             "<R> ".yellow().bold(),
-        ]));
+        ]);
         let state = *app.state.lock().unwrap();
         let block = Block::default()
             .title("MoshiMoshi")
             .title_alignment(Alignment::Center)
-            .title(instructions.alignment(Alignment::Center).position(block::Position::Bottom))
+            .title_bottom(instructions)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
         let chunks = Layout::default()

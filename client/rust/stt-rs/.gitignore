@@ -32,3 +32,6 @@ target
 # Environment files (contain secrets)
 .env.development
 .env.production
+
+# Audio Inputs
+client/rust/stt-rs/audio-input/

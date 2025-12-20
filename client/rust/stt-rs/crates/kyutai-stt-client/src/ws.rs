@@ -112,7 +112,8 @@ mod tests {
         let session = dummy_session(out_rx);
         let mut stream = session
             .into_event_stream()
-            .utterance_finalize_delay(Duration::from_millis(10));
+            .utterance_finalize_delay(Duration::from_millis(10))
+            .utterance_partial_interval(Duration::from_millis(0));
 
         out_tx
             .send(OutMsg::Word {
@@ -514,6 +515,8 @@ pub struct SttEventStream {
     utterance_text: String,
     utterance_finalize_delay: Duration,
     utterance_deadline: Option<Instant>,
+    utterance_partial_min_interval: Duration,
+    last_partial_emit: Option<Instant>,
 }
 
 impl SttEventStream {
@@ -525,11 +528,18 @@ impl SttEventStream {
             utterance_text: String::new(),
             utterance_finalize_delay: Duration::from_millis(1500),
             utterance_deadline: None,
+            utterance_partial_min_interval: Duration::from_millis(100),
+            last_partial_emit: None,
         }
     }
 
     pub fn utterance_finalize_delay(mut self, delay: Duration) -> Self {
         self.utterance_finalize_delay = delay;
+        self
+    }
+
+    pub fn utterance_partial_interval(mut self, interval: Duration) -> Self {
+        self.utterance_partial_min_interval = interval;
         self
     }
 
@@ -619,10 +629,18 @@ impl SttEventStream {
             self.utterance_text.push(' ');
         }
         self.utterance_text.push_str(&word_text);
-        self.pending
-            .push_back(SttEvent::UtterancePartial(Utterance {
-                text: self.utterance_text.clone(),
-            }));
+        let now = Instant::now();
+        let should_emit = self.utterance_partial_min_interval.is_zero()
+            || self
+                .last_partial_emit
+                .map_or(true, |last| now.duration_since(last) >= self.utterance_partial_min_interval);
+        if should_emit {
+            self.pending
+                .push_back(SttEvent::UtterancePartial(Utterance {
+                    text: self.utterance_text.clone(),
+                }));
+            self.last_partial_emit = Some(now);
+        }
 
         self.utterance_deadline = Some(Instant::now() + self.utterance_finalize_delay);
     }
@@ -634,6 +652,7 @@ impl SttEventStream {
         }
 
         let text = std::mem::take(&mut self.utterance_text);
+        self.last_partial_emit = None;
         Some(SttEvent::UtteranceFinal(Utterance { text }))
     }
 }

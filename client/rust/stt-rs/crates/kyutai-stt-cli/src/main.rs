@@ -15,9 +15,63 @@ mod auth;
 
 const OUTPUT_SAMPLE_RATE_HZ: usize = 24_000;
 const OUTPUT_CHUNK_SAMPLES: usize = 1920;
+const FILE_INPUT_CHUNK_SAMPLES: usize = 4096;
 const LEVEL_RENDER_INTERVAL: Duration = Duration::from_millis(50);
 const PROGRESS_RENDER_INTERVAL: Duration = Duration::from_millis(200);
 const TRANSCRIPT_FLUSH_INTERVAL: Duration = Duration::from_millis(200);
+
+struct LinearResampler {
+    in_rate_hz: u32,
+    out_rate_hz: u32,
+    step: f64,
+    pos: f64,
+    buf: Vec<f32>,
+}
+
+impl LinearResampler {
+    fn new(in_rate_hz: u32, out_rate_hz: u32) -> Self {
+        Self {
+            in_rate_hz,
+            out_rate_hz,
+            step: in_rate_hz as f64 / out_rate_hz as f64,
+            pos: 0.0,
+            buf: Vec::new(),
+        }
+    }
+
+    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        out.clear();
+        if input.is_empty() && self.buf.is_empty() {
+            return;
+        }
+
+        if !input.is_empty() {
+            self.buf.extend_from_slice(input);
+        }
+
+        let approx_out_len = ((input.len() as u64 * self.out_rate_hz as u64)
+            / self.in_rate_hz.max(1) as u64)
+            .saturating_add(2) as usize;
+        out.reserve(approx_out_len);
+
+        while self.pos + 1.0 < self.buf.len() as f64 {
+            let i = self.pos.floor() as usize;
+            let frac = self.pos - i as f64;
+
+            let a = self.buf[i];
+            let b = self.buf[i + 1];
+
+            out.push(a + (b - a) * frac as f32);
+            self.pos += self.step;
+        }
+
+        let drain = self.pos.floor() as usize;
+        if drain > 0 {
+            self.buf.drain(0..drain);
+            self.pos -= drain as f64;
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -552,15 +606,14 @@ async fn run_file(
 
     let (pcm, sr_in) =
         kaudio::pcm_decode(&file_args.path).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let pcm = if sr_in as usize == OUTPUT_SAMPLE_RATE_HZ {
-        pcm
-    } else {
-        kaudio::resample(&pcm, sr_in as usize, OUTPUT_SAMPLE_RATE_HZ)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-    };
 
     let rtf = file_args.rtf.filter(|v| v.is_finite() && *v > 0.0);
-    let total_samples = pcm.len();
+    let total_samples = if sr_in as usize == OUTPUT_SAMPLE_RATE_HZ {
+        pcm.len()
+    } else {
+        (pcm.len() as u64 * OUTPUT_SAMPLE_RATE_HZ as u64 / sr_in.max(1) as u64)
+            .saturating_add(2) as usize
+    };
     let total_duration =
         Duration::from_secs_f64(total_samples as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);
 
@@ -592,17 +645,82 @@ async fn run_file(
         let mut samples_sent: usize = 0;
         let progress_tx = progress_tx_for_send;
 
-        let mut chunks = pcm.chunks_exact(OUTPUT_CHUNK_SAMPLES);
-        for chunk in chunks.by_ref() {
-            sender
-                .send(InMsg::Audio { pcm: chunk.to_vec() })
-                .await?;
+        let mut resampler = if sr_in as usize != OUTPUT_SAMPLE_RATE_HZ {
+            Some(LinearResampler::new(sr_in as u32, OUTPUT_SAMPLE_RATE_HZ as u32))
+        } else {
+            None
+        };
+        let mut resample_buf = Vec::<f32>::new();
+        let mut pending = Vec::<f32>::new();
+        let mut pending_read_idx = 0usize;
+
+        for input_chunk in pcm.chunks(FILE_INPUT_CHUNK_SAMPLES) {
+            let samples = match resampler.as_mut() {
+                Some(resampler) => {
+                    resampler.process_into(input_chunk, &mut resample_buf);
+                    resample_buf.as_slice()
+                }
+                None => input_chunk,
+            };
+
+            if samples.is_empty() {
+                continue;
+            }
+
+            pending.extend_from_slice(samples);
+
+            while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {
+                let start_idx = pending_read_idx;
+                let end_idx = pending_read_idx + OUTPUT_CHUNK_SAMPLES;
+                let chunk = pending[start_idx..end_idx].to_vec();
+                pending_read_idx = end_idx;
+
+                sender.send(InMsg::Audio { pcm: chunk }).await?;
+
+                chunk_idx += 1;
+                samples_sent += OUTPUT_CHUNK_SAMPLES;
+                if let Some(tx) = &progress_tx {
+                    let audio_elapsed = Duration::from_secs_f64(
+                        samples_sent as f64 / OUTPUT_SAMPLE_RATE_HZ as f64,
+                    );
+                    let _ = tx.try_send(ProgressUpdate {
+                        audio_elapsed,
+                        wall_elapsed: start.elapsed(),
+                    });
+                }
+                if let Some(rtf) = rtf {
+                    let target = start + chunk_duration.mul_f64(chunk_idx as f64 / rtf);
+                    sleep_until(target).await;
+                }
+            }
+
+            if pending_read_idx > 0 && pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
+                pending.drain(..pending_read_idx);
+                pending_read_idx = 0;
+            }
+        }
+
+        if let Some(resampler) = resampler.as_mut() {
+            resampler.process_into(&[], &mut resample_buf);
+            if !resample_buf.is_empty() {
+                pending.extend_from_slice(&resample_buf);
+            }
+        }
+
+        while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {
+            let start_idx = pending_read_idx;
+            let end_idx = pending_read_idx + OUTPUT_CHUNK_SAMPLES;
+            let chunk = pending[start_idx..end_idx].to_vec();
+            pending_read_idx = end_idx;
+
+            sender.send(InMsg::Audio { pcm: chunk }).await?;
 
             chunk_idx += 1;
-            samples_sent += chunk.len();
+            samples_sent += OUTPUT_CHUNK_SAMPLES;
             if let Some(tx) = &progress_tx {
-                let audio_elapsed =
-                    Duration::from_secs_f64(samples_sent as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);
+                let audio_elapsed = Duration::from_secs_f64(
+                    samples_sent as f64 / OUTPUT_SAMPLE_RATE_HZ as f64,
+                );
                 let _ = tx.try_send(ProgressUpdate {
                     audio_elapsed,
                     wall_elapsed: start.elapsed(),
@@ -614,14 +732,15 @@ async fn run_file(
             }
         }
 
-        let remainder = chunks.remainder();
-        if !remainder.is_empty() {
+        let remainder_len = pending.len().saturating_sub(pending_read_idx);
+        if remainder_len > 0 {
             let mut tail = vec![0.0; OUTPUT_CHUNK_SAMPLES];
-            tail[..remainder.len()].copy_from_slice(remainder);
+            tail[..remainder_len]
+                .copy_from_slice(&pending[pending_read_idx..pending_read_idx + remainder_len]);
             sender.send(InMsg::Audio { pcm: tail }).await?;
 
             chunk_idx += 1;
-            samples_sent += remainder.len();
+            samples_sent += remainder_len;
             if let Some(tx) = &progress_tx {
                 let audio_elapsed =
                     Duration::from_secs_f64(samples_sent as f64 / OUTPUT_SAMPLE_RATE_HZ as f64);

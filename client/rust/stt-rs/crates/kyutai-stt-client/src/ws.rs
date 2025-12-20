@@ -572,22 +572,22 @@ impl SttEventStream {
     }
 
     fn handle_out_msg(&mut self, msg: OutMsg) {
-        match &msg {
+        match msg {
             OutMsg::Ready => {
                 self.pending.push_back(SttEvent::Ready);
             }
             OutMsg::Word { text, start_time } => {
                 self.pending.push_back(SttEvent::WordReceived {
                     text: text.clone(),
-                    start_ms: sec_to_ms(*start_time),
+                    start_ms: sec_to_ms(start_time),
                 });
 
-                if let Some(word) = self.transcript.push(&msg) {
+                if let Some(word) = self.transcript.push_word(text, start_time) {
                     self.push_word_finalized(word);
                 }
             }
-            OutMsg::EndWord { .. } => {
-                if let Some(word) = self.transcript.push(&msg) {
+            OutMsg::EndWord { stop_time } => {
+                if let Some(word) = self.transcript.push_end_word(stop_time) {
                     self.push_word_finalized(word);
                 }
             }
@@ -597,18 +597,16 @@ impl SttEventStream {
                 buffered_pcm,
             } => {
                 self.pending.push_back(SttEvent::VadStep {
-                    step_idx: *step_idx,
-                    prs: prs.clone(),
-                    buffered_pcm: *buffered_pcm,
+                    step_idx,
+                    prs,
+                    buffered_pcm,
                 });
             }
             OutMsg::Marker { id } => {
-                self.pending.push_back(SttEvent::StreamMarker { id: *id });
+                self.pending.push_back(SttEvent::StreamMarker { id });
             }
             OutMsg::Error { message } => {
-                self.pending.push_back(SttEvent::Error {
-                    message: message.clone(),
-                });
+                self.pending.push_back(SttEvent::Error { message });
             }
         }
     }

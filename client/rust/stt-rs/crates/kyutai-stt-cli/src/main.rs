@@ -1006,6 +1006,11 @@ async fn run_mic_test(args: MicTestArgs) -> Result<()> {
             eprintln!("No audio samples recorded.");
         } else {
             eprintln!("Saving {} samples to {}...", samples.len(), path.display());
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
             write_wav(&path, &samples, OUTPUT_SAMPLE_RATE_HZ as u32)?;
             eprintln!("Saved to {}", path.display());
         }

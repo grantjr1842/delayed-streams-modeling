@@ -87,6 +87,44 @@ echo "Server: $STT_SERVER_URL"
 
 TOKEN=$(generate_token "$BETTER_AUTH_SECRET")
 
+# Ensure the directory exists for mic-test --save-wav targets.
+ensure_save_wav_dir() {
+    local next_is_path=0
+    local arg
+    for arg in "$@"; do
+        if [[ "$next_is_path" -eq 1 ]]; then
+            local dir
+            dir="$(dirname "$arg")"
+            if [[ -n "$dir" && "$dir" != "." ]]; then
+                mkdir -p "$dir"
+            fi
+            next_is_path=0
+            continue
+        fi
+
+        case "$arg" in
+            --save-wav)
+                next_is_path=1
+                ;;
+            --save-wav=*)
+                local path="${arg#--save-wav=}"
+                local dir
+                dir="$(dirname "$path")"
+                if [[ -n "$dir" && "$dir" != "." ]]; then
+                    mkdir -p "$dir"
+                fi
+                ;;
+        esac
+    done
+
+    if [[ "$next_is_path" -eq 1 ]]; then
+        echo "ERROR: --save-wav requires a path" >&2
+        exit 1
+    fi
+}
+
+ensure_save_wav_dir "$@"
+
 # Pass all arguments to the CLI
 cd "$PROJECT_ROOT"
 exec cargo run -p kyutai-stt-cli --release -- --url "$STT_SERVER_URL" --auth-token "$TOKEN" "$@"

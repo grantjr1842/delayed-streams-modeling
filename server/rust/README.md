@@ -6,10 +6,9 @@ This directory contains all server-side Rust code for the Delayed Streams Modeli
 
 - **moshi/** - Moshi server workspace
   - **moshi-server/** - Main server binary
-  - **moshi-core/** - Core library with model implementations
+  - **moshi-core/** - Core library with model implementations (includes Mimi in pure Rust)
   - **moshi-backend/** - Backend infrastructure
   - **moshi-cli/** - Command-line interface
-  - **mimi-pyo3/** - Python bindings for Mimi
 
 ## Building
 

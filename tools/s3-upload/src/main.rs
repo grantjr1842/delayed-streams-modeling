@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::{Client, config::Builder as ConfigBuilder, types::ObjectCannedAcl};
+use aws_sdk_s3::{Client, types::ObjectCannedAcl};
 use clap::Parser;
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -58,12 +57,6 @@ struct PublishStats {
     skipped: usize,
     dry_run_uploads: usize,
     bytes_uploaded: u64,
-}
-
-impl PublishStats {
-    fn new() -> Self {
-        Self { uploaded: 0, skipped: 0, dry_run_uploads: 0, bytes_uploaded: 0 }
-    }
 }
 
 // Quick fix for struct field initialization above

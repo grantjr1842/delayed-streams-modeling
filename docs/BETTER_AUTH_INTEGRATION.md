@@ -179,7 +179,7 @@ The moshi-server expects the following claims in the Better Auth JWT:
 
 ## Programmatic Access
 
-For programmatic API access (e.g., Python scripts), obtain a JWT token from the Better Auth server and pass it via:
+For programmatic API access (e.g., CLI tools), obtain a JWT token from the Better Auth server and pass it via:
 
 - `Authorization: Bearer <token>` header
 - `?token=<token>` query parameter

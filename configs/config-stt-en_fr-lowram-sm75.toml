@@ -9,7 +9,7 @@ path = "/api/asr-streaming"
 type = "BatchedAsr"
 # Using pre-converted FP16 model for SM 7.5 (Turing) GPUs that lack native BF16.
 # F16 provides memory savings while avoiding the BF16 kernel issues.
-# Generated via: uv run --with torch,safetensors,huggingface_hub,numpy scripts/prep_sm75_assets.py
+# Generated via: cargo run --bin sm75-prep -- --output assets/fp16/stt-1b-en_fr-candle.fp16.safetensors
 lm_model_file = "assets/fp16/stt-1b-en_fr-candle.fp16.safetensors"
 text_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/tokenizer_en_fr_audio_8000.model"
 audio_tokenizer_file = "hf://kyutai/stt-1b-en_fr-candle/mimi-pytorch-e351c8d8@125.safetensors"

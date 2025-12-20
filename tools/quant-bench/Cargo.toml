@@ -11,6 +11,3 @@ serde_json = "1.0"
 moshi = { path = "../../server/rust/moshi/moshi-core" }
 candle = { version = "0.9.1", package = "candle-core" }
 candle-nn = "0.9.1"
-
-# Note: full-moon is a Lua parser, not relevant here. I meant standard benchmarking tools.
-# actually for parsing python/execution we might just use Command.

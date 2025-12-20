@@ -3,6 +3,8 @@
 //! This module provides ASCII art banners, boxed configuration displays,
 //! progress indicators, and consistent styling for server startup messages.
 
+#![allow(dead_code)]
+
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
@@ -473,7 +475,7 @@ impl TableFormatter {
     /// Print the table to stdout
     pub fn print(&self) {
         let widths = self.column_widths();
-        let total_width: usize = widths.iter().sum::<usize>() + (widths.len() * 3) + 1;
+        let _total_width: usize = widths.iter().sum::<usize>() + (widths.len() * 3) + 1;
 
         // Top border
         let top_border: String = format!(

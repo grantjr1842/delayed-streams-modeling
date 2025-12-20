@@ -27,7 +27,8 @@ struct DeviceCapability {
 }
 
 const AMPERE_MAJOR: i32 = 8;
-const CONVERTER_CMD: &str = "uv run --with torch --with huggingface_hub --with safetensors scripts/convert_bf16_to_fp16.py --output assets/fp16/stt-1b-en_fr-candle.fp16.safetensors";
+const CONVERTER_CMD: &str =
+    "cargo run --bin sm75-prep -- --output assets/fp16/stt-1b-en_fr-candle.fp16.safetensors";
 const SM75_CONFIG: &str = "configs/config-stt-en_fr-lowram-sm75.toml";
 
 fn main() -> Result<ExitCode> {

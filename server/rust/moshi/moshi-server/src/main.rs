@@ -4,8 +4,7 @@
 
 use anyhow::Result;
 use axum::{
-    body::Body,
-    http::{header, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use candle::Device;

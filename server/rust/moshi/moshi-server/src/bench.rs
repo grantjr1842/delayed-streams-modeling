@@ -3,6 +3,8 @@
 //! This module provides utilities for measuring and recording inference performance
 //! metrics, including CUDA synchronization timing and percentile calculations.
 
+#![allow(dead_code)]
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

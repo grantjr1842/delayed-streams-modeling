@@ -7,25 +7,13 @@
 See the [top-level README.md](../README.md) for more information.
 
 This provides the Rust backend (both Mimi and Moshi) and client implementation.
-The Mimi implementation is available through Python bindings, through the  `rustymimi` package.
+Mimi is used via the pure Rust implementation in `moshi-core`.
 
 ## Requirements
 
 You will need a recent version of the [Rust toolchain](https://rustup.rs/).
 To compile GPU support, you will also need the [CUDA](https://developer.nvidia.com/cuda-toolkit) properly installed for your GPU, in particular with `nvcc`.
 
-
-## Rust based Mimi with Python bindings
-
-First, a standalone rust based implementation of Mimi is provided, along with Python bindings.
-This is the one used by `moshi_mlx`. It is automatically installed with `moshi_mlx`, but you
-can install it separately as
-```bash
-# Install from pip:
-pip install rustymimi
-# Alternatively, if you want to compile the package run from this directory.
-maturin dev -r -m mimi-pyo3/Cargo.toml
-```
 
 ## Rust server
 
@@ -59,9 +47,9 @@ site" or "Proceed to localhost (unsafe)".
 ## Rust client
 
 We recommend using the web UI as it provides some echo cancellation that helps
-the overall model quality. Alternatively we provide some command line interfaces
-for the rust and python versions, the protocol is the same as with the web UI so
-there is nothing to change on the server side.
+the overall model quality. Alternatively we provide command line interfaces,
+and the protocol is the same as with the web UI so there is nothing to change
+on the server side.
 
 ### Rust Command Line
 

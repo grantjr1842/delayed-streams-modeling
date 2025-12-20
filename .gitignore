@@ -197,6 +197,7 @@ assets/fp16/stt-1b-en_fr-candle.fp16.safetensors
 
 # Logs folders
 logs/
+backup/mimi-pyo3-backup-*.tar.gz
 
 /tmp/
 /tmp_*

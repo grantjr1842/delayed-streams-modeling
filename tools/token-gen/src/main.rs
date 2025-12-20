@@ -56,7 +56,7 @@ fn load_secret() -> Result<String> {
     }
 
     // Try .env file using dotenvy
-    if let Ok(path) = dotenvy::dotenv() {
+    if dotenvy::dotenv().is_ok() {
         // dotenvy loads into env vars
         if let Ok(secret) = env::var("BETTER_AUTH_SECRET") {
              return Ok(secret);

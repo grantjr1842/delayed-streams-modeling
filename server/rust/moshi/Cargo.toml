@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "mimi-pyo3",
     "moshi-backend",
     "moshi-cli",
     "moshi-core",
@@ -51,13 +50,10 @@ log = "0.4.28"
 moshi = { path = "./moshi-core", version = "0.6.4" }
 native-tls = "0.2.14"
 nvml-wrapper = "0.11.0"
-numpy = "0.27.0"
 ogg = { version = "0.9.2", features = ["async"] }
 owo-colors = "4"
 opus = "0.3.0"
 prometheus = "0.14.0"
-pyo3 = "0.27.2"
-pyo3-ffi = "0.27.2"
 rand = { version = "0.8.5", features = ["getrandom"] }
 rand_chacha = "0.3.1"
 ratatui = "0.29.0"

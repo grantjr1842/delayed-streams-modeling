@@ -54,5 +54,4 @@ Please submit issues on our Github repository.
 
 By contributing to Delayed-Streams-Modeling, you agree that your contributions
 will be licensed under the LICENSE-* files in the root directory of this source
-tree. In particular, the rust code is licensed under APACHE, and the python code
-under MIT.
+tree.

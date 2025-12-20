@@ -10,11 +10,7 @@ This document provides guidance on resolving audio streaming issues with the mos
 
 **Root Cause**: Real-Time Factor (RTF) > 1.0 means the server generates audio slower than playback speed, causing client buffer underruns.
 
-**Diagnosis**:
-```bash
-# Run benchmark to check RTF
-./tools/benchmarks/tts_rtf_bench.sh ws://127.0.0.1:8080 5
-```
+**Diagnosis**: Measure real-time factor (RTF) using a client or your own load test.
 
 Expected output metrics:
 - **RTF < 1.0**: Server is fast enough for real-time playback ✓
@@ -69,16 +65,6 @@ Higher = more concurrent connections, slower per-request
 |-----------|---------|------------------------|
 | `prebuffer_ms` | 1500 | 3000-5000 |
 | `max_buffer_ms` | 6000 | 8000-12000 |
-
-## Audio Integrity Testing
-
-```bash
-# Check WAV files for corruption
-python client/python/integrity_check.py tmp/tts/
-
-# Run full benchmark suite
-./tools/benchmarks/tts_rtf_bench.sh ws://127.0.0.1:8080 5
-```
 
 ## Related Issues
 

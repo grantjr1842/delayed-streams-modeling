@@ -54,7 +54,7 @@ fn main() -> Result<()> {
        .arg("--config")
        .arg(&cli.config);
     
-    // Note: The python script forwards extra args. We skipped implementing that for brevity 
+    // Note: The legacy smoke-test forwarded extra args. We skipped implementing that for brevity
     // but could add `#[arg(trailing_var_arg = true)] extra_args: Vec<String>` if needed.
 
     println!("Launching: {:?}", cmd);

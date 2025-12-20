@@ -270,6 +270,7 @@ impl Encoder {
         Ok(buf)
     }
 
+    #[allow(dead_code)]
     pub fn encode_msg(&mut self, msg: OutMsg) -> Result<Option<Vec<u8>>> {
         use serde::Serialize;
         let buf = match self {

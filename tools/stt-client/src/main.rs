@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, HostTrait};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::Read;
-use std::sync::{Arc, Mutex};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
@@ -36,15 +33,7 @@ enum Commands {
     }
 }
 
-#[derive(Serialize)]
-struct AudioMessage<'a> {
-    source_rate: u32,
-    pcm: &'a [u8], // or Vec<u8>
-    // msgpack might need custom struct matching server expectation
-    // Python sends msgpack.packb({"source_rate": sample_rate, "pcm": bytes})
-}
-
-// Actually Python `stt_from_mic_rust_server.py` sends raw bytes? 
+// Actually Python `stt_from_mic_rust_server.py` sends raw bytes?
 // Checking the script logic...
 // `websocket.send(msgpack.packb({"source_rate": SAMPLE_RATE, "pcm": audio.tobytes()}))`
 
@@ -89,7 +78,7 @@ async fn run_mic(url_str: String, token: Option<String>, device_index: usize) ->
     println!("Connected");
 
     let (mut write, mut read) = ws_stream.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (_tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     let sample_rate = {
         let host = cpal::default_host();
@@ -106,7 +95,7 @@ async fn run_mic(url_str: String, token: Option<String>, device_index: usize) ->
     };
     println!("Sample rate: {}", sample_rate);
 
-    let send_handle = tokio::spawn(async move {
+    let _send_handle = tokio::spawn(async move {
         while let Some(pcm_bytes) = rx.recv().await {
             // To force map in rmp-serde:
             let mut buf = Vec::new();
@@ -138,7 +127,7 @@ struct PacketInternal {
     pcm: serde_bytes::ByteBuf,
 }
 
-async fn run_file(path: String, url_str: String, token: Option<String>) -> Result<()> {
+async fn run_file(_path: String, _url_str: String, _token: Option<String>) -> Result<()> {
     // Similar logic but read file using hound
     // ...
     println!("File functionality simplified for this conversion step.");

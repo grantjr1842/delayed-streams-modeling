@@ -4,7 +4,7 @@ This document provides a comprehensive overview of the Delayed Streams Modeling 
 
 ## Overview
 
-The delayed-streams-modeling project implements real-time Speech-to-Text (STT) and Text-to-Speech (TTS) using the Kyutai Delayed Streams Modeling technique. The system consists of server components (Rust, Python, TypeScript) and client components (Rust) organized for production deployment.
+The delayed-streams-modeling project implements real-time Speech-to-Text (STT) and Text-to-Speech (TTS) using the Kyutai Delayed Streams Modeling technique. The system consists of server components (Rust, TypeScript) and client components (Rust) organized for production deployment.
 
 ## Component Architecture
 

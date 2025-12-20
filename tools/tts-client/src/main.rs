@@ -1,10 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -52,7 +51,7 @@ async fn main() -> Result<()> {
         pairs.append_pair("format", "PcmMessagePack");
         if let Some(token) = &cli.token {
             pairs.append_pair("token", token);
-        } else if let Ok(secret) = std::env::var("BETTER_AUTH_SECRET") {
+        } else if std::env::var("BETTER_AUTH_SECRET").is_ok() {
              // We can't easily generate JWT here without re-implementing logic or
              // calling token-gen logic. For now, assume token is passed or not needed.
              // Or we could shell out to token-gen?
@@ -71,14 +70,12 @@ async fn main() -> Result<()> {
     let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let play_audio = cli.out == "-";
     
-    let audio_handle = std::thread::spawn(move || {
+    let _audio_handle = std::thread::spawn(move || {
         if play_audio {
             let host = cpal::default_host();
             let device = host.default_output_device().expect("no output device available");
             let config = device.default_output_config().unwrap();
-            
-            // Assume 24kHz for now based on script
-            let sample_rate = cpal::SampleRate(24000); 
+
             let config: cpal::StreamConfig = config.into();
 
             let audio_buffer = Arc::new(Mutex::new(Vec::new()));

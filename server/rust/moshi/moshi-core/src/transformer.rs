@@ -8,9 +8,7 @@
 // more efficient matmuls
 // 2. Quantized tensors cannot be easily split (regarding cross attention and QKV proj weights)
 // 3. Linear and Quantized linear layers are two different types
-use crate::nn::{
-    linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedWeight, MaybeQuantizedVarBuilder,
-};
+use crate::nn::{linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder};
 use crate::streaming::{StreamMask, StreamTensor, StreamingModule};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 
@@ -311,7 +309,7 @@ impl StreamingMultiheadCrossAttention {
             CaSrc::KeysValues(cakv) => Ok(cakv.clone()),
             CaSrc::Tokens(xs) => {
                 let kv = xs.apply(&self.in_proj_kv)?;
-                let (ca_b, ca_t, ca_dim) = kv.dims3()?;
+                let (ca_b, ca_t, _ca_dim) = kv.dims3()?;
                 let kv = kv.reshape((ca_b, ca_t, 2, (), self.head_dim))?;
                 // convert to correct float point type for quantized models
                 let kv =

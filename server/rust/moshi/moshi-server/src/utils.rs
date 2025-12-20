@@ -185,6 +185,7 @@ pub fn resolve_hf_snapshot(input: &str) -> Result<String> {
     }
 }
 
+#[allow(dead_code)]
 fn walk_toml(t: &mut toml::Value, f: &impl Fn(&mut String) -> Result<()>) -> Result<()> {
     match t {
         toml::Value::Table(t) => {
@@ -206,6 +207,7 @@ fn walk_toml(t: &mut toml::Value, f: &impl Fn(&mut String) -> Result<()>) -> Res
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn resolve_or_download_toml(t: &mut toml::Table) -> Result<()> {
     for (_, t) in t.iter_mut() {
         walk_toml(t, &|s: &mut String| -> Result<()> {

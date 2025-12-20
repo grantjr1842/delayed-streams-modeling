@@ -196,11 +196,13 @@ where
 }
 
 /// Compact formatter for minimal output
+#[allow(dead_code)]
 pub struct CompactFormatter<T> {
     timer: T,
     use_ansi: bool,
 }
 
+#[allow(dead_code)]
 impl<T> CompactFormatter<T> {
     /// Create a new compact formatter
     pub fn new(timer: T) -> Self {

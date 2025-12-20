@@ -94,4 +94,17 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn encode_into_matches_encode() {
+        let msg = InMsg::Audio {
+            pcm: vec![0.0, 0.5, -0.5],
+        };
+
+        let bytes = encode_in_msg(&msg).expect("encode should succeed");
+        let mut buf = vec![0x00, 0x01];
+        encode_in_msg_into(&mut buf, &msg).expect("encode_into should succeed");
+
+        assert_eq!(bytes, buf);
+    }
 }

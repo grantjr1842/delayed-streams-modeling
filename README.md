@@ -112,17 +112,17 @@ uv run \
 
 The second script can be used to run a model on an existing Hugging Face dataset and calculate its performance metrics: 
 ```bash
-uv run scripts/evaluate_on_dataset.py  \
+uv run scripts/stt_evaluate_on_dataset.py  \
   --dataset meanwhile  \
   --hf-repo kyutai/stt-2.6b-en
 ```
 
 Another example shows how one can provide a text-, audio-, or text-audio prompt to our STT model:
 ```bash
-uv run scripts/stt_from_file_pytorch_with_prompt.py \
+uv run scripts/stt_from_file_with_prompt_pytorch.py \
   --hf-repo kyutai/stt-2.6b-en \
-  --file bria.mp3 \
-  --prompt_file ./audio/loonah.mp3 \
+  --file audio/bria.mp3 \
+  --prompt_file audio/loona.mp3 \
   --prompt_text "Loonah" \
   --cut-prompt-transcript
 ```
@@ -177,7 +177,7 @@ We also provide a script for transcribing from an audio file.
 uv run scripts/stt_from_file_rust_server.py audio/bria.mp3
 ```
 
-The script limits the decoding speed to simulates real-time processing of the audio. 
+The script limits the decoding speed to simulate real-time processing of the audio. 
 Faster processing can be triggered by setting 
 the real-time factor, e.g. `--rtf 1000` will process
 the data as fast as possible.
@@ -201,7 +201,7 @@ A standalone Rust example script is provided in the `client/rust/stt-rs` directo
 This can be used as follows:
 ```bash
 cd client/rust/stt-rs
-cargo run --features cuda -r -- ../audio/bria.mp3
+cargo run --features cuda -r -- ../../../audio/bria.mp3
 ```
 You can get the timestamps by adding the `--timestamps` flag, and see the output
 of the semantic VAD by adding the `--vad` flag.
@@ -293,11 +293,13 @@ and just prefix the command above with `uvx --with moshi`.
 The Rust implementation provides a server that can process multiple streaming
 queries in parallel.
 
-Installing the Rust server is a bit tricky because it uses our Python implementation under the hood,
-which also requires installing the Python dependencies.
-Use the [start_tts.sh](https://github.com/kyutai-labs/unmute/blob/main/dockerless/start_tts.sh) script to properly install the Rust server.
-If you already installed the `moshi-server` crate before and it's not working, you might need to force a reinstall by running `cargo uninstall moshi-server` first.
-Feel free to open an issue if the installation is still broken.
+In order to run the server, install the [moshi-server
+crate](https://crates.io/crates/moshi-server) via the following command:
+```bash
+cargo install --features cuda moshi-server
+```
+
+For detailed compilation instructions, see [docs/MOSHI_SERVER_SETUP.md](docs/MOSHI_SERVER_SETUP.md).
 
 Once installed, the server can be started via the following command using the config file
 from this repository.

@@ -23,8 +23,8 @@ can install it separately as
 ```bash
 # Install from pip:
 pip install rustymimi
-# Alternatively, if you want to compile the package run from the root of the repo.
-maturin dev -r -m rust/mimi-pyo3/Cargo.toml
+# Alternatively, if you want to compile the package run from this directory.
+maturin dev -r -m mimi-pyo3/Cargo.toml
 ```
 
 ## Rust server

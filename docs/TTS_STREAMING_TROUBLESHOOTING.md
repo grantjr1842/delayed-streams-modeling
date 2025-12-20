@@ -25,7 +25,7 @@ Expected output metrics:
 #### Quick Fix (No Restart Required)
 Increase client prebuffer to compensate for high RTF:
 ```bash
-cd tts-rs && cargo run --release -- \
+cd client/rust/tts-rs && cargo run --release -- \
   --url ws://127.0.0.1:8080 \
   --prebuffer-ms 3000 \
   --max-buffer-ms 8000 \
@@ -48,7 +48,7 @@ Use a config optimized for real-time performance:
 ```
 
 #### Long-term Fix
-Issue #79 (Refactor to pure Rust) removes the Python/PyO3 overhead, expected to reduce RTF by 30-50%.
+The pure Rust refactoring (completed in Issue #79) has removed Python/PyO3 overhead, improving performance significantly.
 
 ## Key Configuration Parameters
 

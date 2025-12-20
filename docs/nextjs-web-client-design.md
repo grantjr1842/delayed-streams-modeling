@@ -1693,7 +1693,7 @@ For each user story to be considered complete:
 
 #### Better Auth Server (Optional)
 - Node.js auth server for user authentication
-- Located at: `moshi/auth-server/`
+- Located at: `server/typescript/auth-server/`
 - Default port: 3001
 - Required environment: `BETTER_AUTH_SECRET`, `DATABASE_URL`
 - Provides: Email/password auth, session management, JWT tokens

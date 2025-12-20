@@ -4,7 +4,7 @@ This document outlines the methodology for benchmarking and optimizing moshi-ser
 
 ## 1. Benchmarking Harness
 
-The `bench` module (`moshi-server/src/bench.rs`) provides utilities for measuring inference latency:
+The `bench` module (`server/rust/moshi/moshi-server/src/bench.rs`) provides utilities for measuring inference latency:
 
 ### Latency Recorders
 
@@ -146,7 +146,7 @@ Audit and minimize `.to_device()` calls:
 
 ```bash
 # Search for device transfers
-grep -r "to_device" moshi/rust/moshi-server/src/
+grep -r "to_device" server/rust/moshi/moshi-server/src/
 ```
 
 ### 4.6 Audio Pipeline Optimization
@@ -236,7 +236,7 @@ Access at `/metrics` endpoint.
 
 ### Device Transfer Audit (`.to_device()` calls)
 
-Found in `moshi-server/src/`:
+Found in `server/rust/moshi/moshi-server/src/`:
 
 | File | Location | Transfer | Purpose |
 |------|----------|----------|---------|

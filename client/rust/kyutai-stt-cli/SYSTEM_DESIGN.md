@@ -17,7 +17,7 @@
   - `hooks/use-websocket.ts` (utterance assembly / finalize heuristic)
   - `public/worklets/audio-processor.js` (resample-to-24k + chunking strategy)
 
-This guide documents the current implementation and can be used by LLM coding agents to maintain or extend the `kyutai-stt-rust-client` project (library + CLI).
+This guide documents the current implementation and can be used by LLM coding agents to maintain or extend the Kyutai STT Rust client components (library + CLI).
 
 ---
 
@@ -514,35 +514,47 @@ Expose counters/histograms:
 
 The project is a Cargo workspace with:
 
-- `crates/kyutai-stt-client` (library)
-- `crates/kyutai-stt-cli` (CLI)
+- `../kyutai-stt-client` (library)
+- `.` (CLI)
 
 ### 10.1 Workspace Tree
 
 ```text
-kyutai-stt-rust-client/
-  Cargo.toml
-  README.md
-  SYSTEM_DESIGN.md
-  scripts/
-    ci.sh
-    run-with-token.sh
-    generate_test_token.py
-  crates/
-    kyutai-stt-client/
-      Cargo.toml
-      src/
-        lib.rs
-        audio.rs
-        audio/
-          level.rs
-          mic.rs
-        protocol.rs
-        transcript.rs
-        types.rs
-        ws.rs
-        error.rs
-    kyutai-stt-cli/
+delayed-streams-modeling/
+  client/
+    rust/
+      kyutai-client-core/
+        Cargo.toml
+        src/
+          lib.rs
+          auth.rs
+          ws.rs
+      kyutai-stt-client/
+        Cargo.toml
+        src/
+          lib.rs
+          audio.rs
+          audio/
+            level.rs
+            mic.rs
+          protocol.rs
+          transcript.rs
+          types.rs
+          ws.rs
+          error.rs
+      kyutai-stt-cli/
+        Cargo.toml
+        README.md
+        SYSTEM_DESIGN.md
+        scripts/
+          ci.sh
+          run-with-token.sh
+          generate_test_token.py
+        audio-input/
+      tts-rs/
+        Cargo.toml
+        src/
+          main.rs
       Cargo.toml
       src/
         main.rs
@@ -564,7 +576,7 @@ CLI-specific dependencies:
 - `jsonwebtoken` + `chrono` (token generation)
 - `serde_json` (token helpers)
 
-Feature flags in `crates/kyutai-stt-client/Cargo.toml`:
+Feature flags in `../kyutai-stt-client/Cargo.toml`:
 
 - `default = ["mic", "file"]`
 - `mic = ["dep:cpal"]` (used by the library)
@@ -622,8 +634,8 @@ Mic capture:
 - `types.rs`: public event and timing types
 - `ws.rs`: WebSocket connect, keepalive, auto-reconnect, event stream
 - `error.rs`: shared error type
-- `crates/kyutai-stt-cli/src/main.rs`: CLI commands, file streaming, progress/RTF display
-- `crates/kyutai-stt-cli/src/auth.rs`: Better Auth JWT generation
+- `src/main.rs`: CLI commands, file streaming, progress/RTF display
+- `../kyutai-client-core/src/auth.rs`: Better Auth JWT generation
 
 ---
 

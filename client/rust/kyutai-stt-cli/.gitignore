@@ -34,4 +34,6 @@ target
 .env.production
 
 # Audio Inputs
-client/rust/stt-rs/audio-input/
+audio-input/*
+!audio-input/input-01.wav
+!audio-input/input-02.wav

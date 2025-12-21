@@ -8,10 +8,9 @@
 //! sends text words, and receives PCM audio which is saved to a WAV file.
 
 use anyhow::{Context, Result};
-use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use kyutai_client_core::{auth, ws};
 use ringbuf::{HeapRb, traits::*};
 use serde::Serialize;
 use std::io::BufRead;
@@ -368,178 +367,6 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn env_is_set_nonempty(key: &str) -> bool {
-    match std::env::var(key) {
-        Ok(v) => !v.trim().is_empty(),
-        Err(_) => false,
-    }
-}
-
-fn maybe_set_env_from_file(path: &Path, key: &str) -> Result<bool> {
-    if !path.exists() {
-        return Ok(false);
-    }
-
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read env file: {}", path.display()))?;
-
-    for raw_line in contents.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        let k = k.trim();
-        let k = k.strip_prefix("export ").unwrap_or(k).trim();
-        if k != key {
-            continue;
-        }
-
-        let mut value = v.trim().to_string();
-        if (value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\''))
-        {
-            value = value[1..value.len().saturating_sub(1)].to_string();
-        }
-
-        if !value.trim().is_empty() {
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-fn load_better_auth_secret_from_env_files_if_needed() -> Result<()> {
-    if env_is_set_nonempty("BETTER_AUTH_SECRET") {
-        return Ok(());
-    }
-
-    let env_name = std::env::var("MOSHI_ENV")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("NODE_ENV")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
-        .unwrap_or_else(|| "development".to_string());
-
-    let root = repo_root();
-
-    let candidates = [
-        root.join(format!("env.{env_name}")),
-        root.join(format!(".env.{env_name}")),
-        root.join("env.development"),
-        root.join(".env.development"),
-        root.join("env.production"),
-        root.join(".env.production"),
-        root.join(".env"),
-    ];
-
-    for candidate in candidates {
-        if maybe_set_env_from_file(&candidate, "BETTER_AUTH_SECRET")? {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, serde::Serialize)]
-struct DevSessionData {
-    id: String,
-    #[serde(rename = "userId")]
-    user_id: String,
-    #[serde(rename = "createdAt")]
-    created_at: String,
-    #[serde(rename = "updatedAt")]
-    updated_at: String,
-    #[serde(rename = "expiresAt")]
-    expires_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    token: Option<String>,
-    #[serde(rename = "ipAddress", skip_serializing_if = "Option::is_none")]
-    ip_address: Option<String>,
-    #[serde(rename = "userAgent", skip_serializing_if = "Option::is_none")]
-    user_agent: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct DevUserData {
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    email: Option<String>,
-    #[serde(rename = "emailVerified", skip_serializing_if = "Option::is_none")]
-    email_verified: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct DevBetterAuthClaims {
-    session: DevSessionData,
-    user: DevUserData,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    iat: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exp: Option<i64>,
-}
-
-fn generate_dev_jwt(secret: &str) -> Result<String> {
-    let user_id = std::env::var("MOSHI_USER_ID").unwrap_or_else(|_| "local-dev-user".to_string());
-    let session_id =
-        std::env::var("MOSHI_SESSION_ID").unwrap_or_else(|_| "local-dev-session".to_string());
-
-    let now = Utc::now();
-    let created_at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let expires_at = (now + ChronoDuration::hours(12)).to_rfc3339_opts(SecondsFormat::Millis, true);
-
-    let claims = DevBetterAuthClaims {
-        session: DevSessionData {
-            id: session_id,
-            user_id: user_id.clone(),
-            created_at: created_at.clone(),
-            updated_at: created_at,
-            expires_at,
-            token: None,
-            ip_address: None,
-            user_agent: None,
-        },
-        user: DevUserData {
-            id: user_id,
-            name: None,
-            email: None,
-            email_verified: None,
-            image: None,
-            role: None,
-            status: Some("approved".to_string()),
-        },
-        iat: Some(now.timestamp()),
-        exp: Some((now + ChronoDuration::hours(12)).timestamp()),
-    };
-
-    let mut header = Header::new(Algorithm::HS256);
-    header.typ = Some("JWT".to_string());
-
-    Ok(jsonwebtoken::encode(
-        &header,
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )?)
-}
-
 fn ensure_token(args: &mut Args) -> Result<()> {
     if args.token.is_some() {
         return Ok(());
@@ -557,7 +384,7 @@ fn ensure_token(args: &mut Args) -> Result<()> {
         _ => return Ok(()),
     };
 
-    args.token = Some(generate_dev_jwt(&secret)?);
+    args.token = Some(auth::generate_dev_jwt(&secret, 12)?);
     Ok(())
 }
 
@@ -1104,27 +931,25 @@ enum InMsg {
 }
 
 fn build_ws_url(args: &Args) -> Result<url::Url> {
-    let mut url = url::Url::parse(&args.url)?;
+    let base_url = url::Url::parse(&args.url)?;
+    let path = if base_url.path().ends_with("/api/tts_streaming") {
+        base_url.path().to_string()
+    } else {
+        format!("{}/api/tts_streaming", base_url.path().trim_end_matches('/'))
+    };
 
-    // Ensure path ends with /api/tts_streaming
-    let path = url.path();
-    if !path.ends_with("/api/tts_streaming") {
-        url.set_path(&format!("{}/api/tts_streaming", path.trim_end_matches('/')));
-    }
+    let seed = args.seed.to_string();
+    let temperature = args.temperature.to_string();
+    let top_k = args.top_k.to_string();
+    let query = [
+        ("voice", args.voice.as_str()),
+        ("format", "PcmMessagePack"),
+        ("seed", seed.as_str()),
+        ("temperature", temperature.as_str()),
+        ("top_k", top_k.as_str()),
+    ];
 
-    // Add query parameters
-    url.query_pairs_mut()
-        .append_pair("voice", &args.voice)
-        .append_pair("format", "PcmMessagePack")
-        .append_pair("seed", &args.seed.to_string())
-        .append_pair("temperature", &args.temperature.to_string())
-        .append_pair("top_k", &args.top_k.to_string());
-
-    if let Some(token) = &args.token {
-        url.query_pairs_mut().append_pair("token", token);
-    }
-
-    Ok(url)
+    ws::build_ws_url(&args.url, &path, &query, args.token.as_deref())
 }
 
 fn redact_ws_url(url: &url::Url) -> String {
@@ -1339,7 +1164,7 @@ async fn run_tts_client(args: Args) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = Args::parse();
-    load_better_auth_secret_from_env_files_if_needed()?;
+    auth::load_better_auth_secret_from_env_files_if_needed(&repo_root())?;
     ensure_token(&mut args)?;
     run_tts_client(args).await
 }

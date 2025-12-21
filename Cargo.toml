@@ -5,7 +5,9 @@ members = [
     "server/rust/moshi/moshi-cli",
     "server/rust/moshi/moshi-core",
     "server/rust/moshi/moshi-server",
-    "client/rust/stt-rs",
+    "client/rust/kyutai-client-core",
+    "client/rust/kyutai-stt-client",
+    "client/rust/kyutai-stt-cli",
     "client/rust/tts-rs",
     "tools/gpu-check",
     "tools/bf16-to-fp16",
@@ -14,8 +16,6 @@ members = [
     "tools/sm75-prep",
     "tools/s3-upload",
     "tools/quant-bench",
-    "tools/tts-client",
-    "tools/stt-client",
     "tools/smoke-test",
 ]
 
@@ -94,7 +94,9 @@ tracing-chrome = "0.7.2"
 tracing-rolling-file = { version = "0.1.3", features = ["non-blocking"] }
 tracing-subscriber = { version = "0.3.22", features = ["chrono", "json"] }
 tui-logger = "0.17.4"
+url = "2.5"
 vergen = { version = "=8.3.2", features = ["build", "cargo", "git", "gitcl", "rustc", "si"] }
+thiserror = "2"
 
 [profile.release]
 debug = true

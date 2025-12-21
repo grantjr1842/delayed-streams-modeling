@@ -21,8 +21,10 @@ delayed-streams-modeling/
 │   │   └── auth-server/ # Authentication server
 ├── client/              # Client/frontend components
 │   └── rust/            # Rust client applications
-│       ├── stt-rs/      # STT standalone client
-│       └── tts-rs/      # TTS standalone client
+│       ├── kyutai-client-core/ # Shared auth/WebSocket helpers
+│       ├── kyutai-stt-client/  # STT client library
+│       ├── kyutai-stt-cli/     # STT CLI
+│       └── tts-rs/             # TTS standalone client
 ├── tools/               # Development tools
 │   ├── bf16-to-fp16/    # Checkpoint conversion helper
 │   ├── gpu-check/       # GPU capability inspector
@@ -31,9 +33,7 @@ delayed-streams-modeling/
 │   ├── s3-upload/       # Log upload helper
 │   ├── sm75-prep/       # Pre-Ampere checkpoint prep
 │   ├── smoke-test/      # Smoke testing utilities
-│   ├── stt-client/      # Rust STT WebSocket client
-│   ├── token-gen/       # JWT token generator
-│   └── tts-client/      # Rust TTS WebSocket client
+│   └── token-gen/       # JWT token generator
 ├── configs/             # Configuration files
 │   ├── stt/             # STT server configs
 │   ├── tts/             # TTS server configs
@@ -105,8 +105,7 @@ and for `kyutai/stt-2.6b-en`, use `configs/stt/config-stt-en-hf.toml`,
 moshi-server worker --config configs/stt/config-stt-en_fr-hf.toml
 ```
 
-Once the server has started, use the Rust clients in `client/rust` or the
-WebSocket helpers in `tools/stt-client` and `tools/tts-client` to connect.
+Once the server has started, use the Rust clients in `client/rust` to connect.
 </details>
 
 <details>
@@ -115,14 +114,11 @@ WebSocket helpers in `tools/stt-client` and `tools/tts-client` to connect.
     <img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue" style="display: inline-block; vertical-align: middle;"/>
 </a>
 
-A standalone Rust example script is provided in the `client/rust/stt-rs` directory in this repo.
+A standalone Rust example is provided in `client/rust/kyutai-stt-cli`.
 This can be used as follows:
 ```bash
-cd client/rust/stt-rs
-cargo run --features cuda -r -- ../../../audio/bria.mp3
+cargo run -p kyutai-stt-cli -r -- --auth-token <JWT> file ../../../audio/bria.mp3
 ```
-You can get the timestamps by adding the `--timestamps` flag, and see the output
-of the semantic VAD by adding the `--vad` flag.
 </details>
 
 
@@ -160,8 +156,7 @@ from this repository.
 moshi-server worker --config configs/tts/config-tts.toml
 ```
 
-Once the server has started, use the Rust clients in `client/rust` or the
-WebSocket helper in `tools/tts-client` to connect.
+Once the server has started, use the Rust clients in `client/rust` to connect.
 
 You can configure the server by modifying `configs/tts/config-tts.toml`. See comments in that file to see what options are available.
 TTS configs live under `configs/tts/` (see `configs/README.md` for layout).

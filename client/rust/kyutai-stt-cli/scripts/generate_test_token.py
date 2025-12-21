@@ -88,8 +88,10 @@ def main():
         print()
         print(token)
         print()
-        print("Usage with tts-rs client:")
-        print(f'  echo "Hello world" | cargo run --release -- - output.wav --token "{token}"')
+        print("Usage with kyutai-tts-rs client:")
+        print(
+            f'  echo "Hello world" | cargo run -p kyutai-tts-rs --release -- --input - --output output.wav --token "{token}"'
+        )
         print()
         
     except ValueError as e:

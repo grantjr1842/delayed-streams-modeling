@@ -18,8 +18,8 @@ A Rust client library and CLI for streaming audio to the **Kyutai STT server** (
 
 | Crate | Description |
 |-------|-------------|
-| [`kyutai-stt-client`](crates/kyutai-stt-client) | Core library with WebSocket transport, MessagePack protocol, and transcript assembly |
-| [`kyutai-stt-cli`](crates/kyutai-stt-cli) | Command-line interface for mic/file transcription |
+| [`kyutai-stt-client`](../kyutai-stt-client) | Core library with WebSocket transport, MessagePack protocol, and transcript assembly |
+| [`kyutai-stt-cli`](.) | Command-line interface for mic/file transcription |
 
 ## Quick Start
 
@@ -32,12 +32,8 @@ A Rust client library and CLI for streaming audio to the **Kyutai STT server** (
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/grantjr1842/stt-rust-client.git
-cd stt-rust-client
-
-# Build the project
-cargo build --all-features --release --verbose --verbose
+# Build the project from the repo root
+cargo build -p kyutai-stt-cli --all-features --release --verbose --verbose
 ```
 
 ### Usage

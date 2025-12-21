@@ -1,0 +1,14 @@
+[package]
+name = "kyutai-client-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+description = "Shared auth and WebSocket helpers for Kyutai clients"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true }
+url = { workspace = true }

@@ -4,16 +4,17 @@ This directory contains all client-side Rust code for the Delayed Streams Modeli
 
 ## Structure
 
-- **stt-rs/** - Speech-to-Text standalone client
+- **kyutai-client-core/** - Shared auth/WebSocket helpers
+- **kyutai-stt-client/** - Speech-to-Text client library
+- **kyutai-stt-cli/** - Speech-to-Text CLI
 - **tts-rs/** - Text-to-Speech standalone client
 
 ## Building
 
-Build all client components:
+Build the client components from the repo root:
 
 ```bash
-cd client/rust
-cargo build --all-features --release
+cargo build -p kyutai-stt-cli -p kyutai-tts-rs --all-features --release
 ```
 
 ## Usage
@@ -23,20 +24,7 @@ cargo build --all-features --release
 Run the STT client on an audio file:
 
 ```bash
-cd client/rust/stt-rs
-cargo run --features cuda -r -- ../../../audio/bria.mp3
-```
-
-Add `--timestamps` flag to see word-level timestamps:
-
-```bash
-cargo run --features cuda -r -- --timestamps ../../../audio/bria.mp3
-```
-
-Add `--vad` flag to see semantic VAD output:
-
-```bash
-cargo run --features cuda -r -- --vad ../../../audio/bria.mp3
+cargo run -p kyutai-stt-cli -r -- file ../../../audio/bria.mp3
 ```
 
 ### TTS Client
@@ -44,8 +32,7 @@ cargo run --features cuda -r -- --vad ../../../audio/bria.mp3
 Run the TTS client to generate audio:
 
 ```bash
-cd client/rust/tts-rs
-cargo run -r -- "Hello world" /tmp/output.wav
+cargo run -p kyutai-tts-rs -r -- "Hello world" /tmp/output.wav
 ```
 
 ## Testing
@@ -53,15 +40,13 @@ cargo run -r -- "Hello world" /tmp/output.wav
 Run all tests:
 
 ```bash
-cd client/rust
-cargo test --all-features
+cargo test -p kyutai-stt-cli -p kyutai-tts-rs --all-features
 ```
 
 Run clippy lints:
 
 ```bash
-cd client/rust
-cargo clippy --all-targets --all-features
+cargo clippy -p kyutai-stt-cli -p kyutai-tts-rs --all-targets --all-features
 ```
 
 ## Documentation

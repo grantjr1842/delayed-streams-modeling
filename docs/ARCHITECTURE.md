@@ -12,7 +12,7 @@ The delayed-streams-modeling project implements real-time Speech-to-Text (STT) a
 ┌─────────────────────────────────────────────────────────────┐
 │                     Client Applications                      │
 ├──────────────┬──────────────┬──────────────────────────────┤
-│   Web Client │   stt-rs     │   tts-rs                      │
+│   Web Client │ kyutai-stt-cli │   tts-rs                    │
 │   (Browser)  │   (Rust CLI) │   (Rust CLI)                  │
 └──────┬───────┴──────┬───────┴──────────┬───────────────────┘
        │              │                   │
@@ -105,21 +105,21 @@ The delayed-streams-modeling project implements real-time Speech-to-Text (STT) a
 
 ### 3. Client Applications
 
-#### stt-rs (Rust CLI)
+#### kyutai-stt-cli (Rust CLI)
 
-**Location**: `client/rust/stt-rs/`
+**Location**: `client/rust/kyutai-stt-cli/`
 
 **Purpose**: Standalone STT client for testing and batch processing.
 
 **Subcommands**:
-- `file`: Local inference on audio files using downloaded model weights
+- `file`: Stream audio files to a moshi-server via WebSocket
 - `mic`: Real-time microphone streaming to a moshi-server via WebSocket
 
 **Features**:
-- File-based transcription (local inference)
+- File-based transcription (server streaming)
 - Real-time microphone input (server streaming)
 - Word-level timestamps
-- Semantic VAD output
+- Optional VAD step logging
 - Automatic JWT token generation from BETTER_AUTH_SECRET
 
 #### tts-rs (Rust CLI)

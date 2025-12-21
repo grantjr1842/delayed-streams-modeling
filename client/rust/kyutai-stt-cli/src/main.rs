@@ -5,6 +5,7 @@ use kyutai_stt_client::audio::{
 };
 use kyutai_stt_client::protocol::InMsg;
 use kyutai_stt_client::{SttClientBuilder, SttEvent};
+use kyutai_client_core::auth;
 #[cfg(feature = "hq-resample")]
 use rubato::Resampler;
 use std::io::{IsTerminal, Write};
@@ -14,8 +15,6 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep_until};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-
-mod auth;
 
 const OUTPUT_SAMPLE_RATE_HZ: usize = 24_000;
 const OUTPUT_CHUNK_SAMPLES: usize = 1920;
@@ -426,8 +425,9 @@ fn resolve_auth_token(
     }
 
     if auto_token {
-        let secret = resolve_secret(secret, env_name)?;
-        let token = auth::generate_token(&secret, 1.0)
+        let base_dir = std::env::current_dir()?;
+        let secret = auth::resolve_secret(secret.as_deref(), &base_dir, env_name)?;
+        let token = auth::generate_token(&secret, 1.0, "kyutai-stt-cli/0.1.0")
             .map_err(|e| anyhow::anyhow!("Failed to generate token: {}", e))?;
         eprintln!("Generated auth token (valid for 1 hour)");
         return Ok(Some(token));
@@ -438,62 +438,13 @@ fn resolve_auth_token(
 
 /// Generate and print a JWT token.
 fn run_token(secret: &Option<String>, env_name: Option<&str>, args: TokenArgs) -> Result<()> {
-    let secret = resolve_secret(secret, env_name)?;
-
-    let token = auth::generate_token(&secret, args.hours)
+    let base_dir = std::env::current_dir()?;
+    let secret = auth::resolve_secret(secret.as_deref(), &base_dir, env_name)?;
+    let token = auth::generate_token(&secret, args.hours, "kyutai-stt-cli/0.1.0")
         .map_err(|e| anyhow::anyhow!("Failed to generate token: {}", e))?;
 
     println!("{token}");
     Ok(())
-}
-
-fn resolve_secret(secret: &Option<String>, env_name: Option<&str>) -> Result<String> {
-    if let Some(secret) = secret.as_deref() {
-        return Ok(secret.to_string());
-    }
-
-    if let Some(secret) = load_secret_from_env_files(env_name)? {
-        return Ok(secret);
-    }
-
-    Err(anyhow::anyhow!(
-        "--secret/BETTER_AUTH_SECRET or .env(.<env>) with BETTER_AUTH_SECRET is required"
-    ))
-}
-
-fn load_secret_from_env_files(env_name: Option<&str>) -> Result<Option<String>> {
-    let env_name = env_name.unwrap_or("development");
-    let candidates = [format!(".env.{env_name}"), ".env".to_string()];
-
-    for file_name in candidates {
-        let path = std::path::Path::new(&file_name);
-        if !path.exists() {
-            continue;
-        }
-        if let Some(secret) = read_env_value(path, "BETTER_AUTH_SECRET")? {
-            return Ok(Some(secret));
-        }
-    }
-
-    Ok(None)
-}
-
-fn read_env_value(path: &std::path::Path, key: &str) -> Result<Option<String>> {
-    let contents = std::fs::read_to_string(path)?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if name.trim() == key {
-            let value = value.trim().trim_matches('"').trim_matches('\'');
-            return Ok(Some(value.to_string()));
-        }
-    }
-    Ok(None)
 }
 
 async fn run_mic(

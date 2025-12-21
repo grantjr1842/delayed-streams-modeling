@@ -35,6 +35,10 @@ Notable log lines:
 - GPU capability detection warning: "Could not detect GPU capabilities. Using configured values."
 - Worker start initiated (no further readiness logs within 30s).
 
+## Issues Found
+- Server did not reach `/api/health` within the initial wait window (likely model download/warmup).
+- Auth is enabled; a valid JWT token is required to exercise TTS endpoints.
+
 ## Blockers / Open Items
 - Server startup likely requires additional time for model downloads or warmup.
 - Auth is enabled; a valid JWT token is required to test `/api/tts` and `/api/tts_streaming`.

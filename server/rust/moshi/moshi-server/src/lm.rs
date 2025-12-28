@@ -16,27 +16,13 @@ struct TextDecoder {
 }
 
 impl TextDecoder {
-    fn text(&self, prev_text_token: u32, text_token: u32) -> Option<String> {
+    fn text(&self, _prev_text_token: u32, text_token: u32) -> Option<String> {
         let config = &self.gen_config;
         if text_token != config.text_start_token
             && text_token != config.text_pad_token
             && text_token != config.text_eop_token
         {
-            if prev_text_token == config.text_start_token {
-                self.text_tokenizer.decode_piece_ids(&[text_token]).ok()
-            } else {
-                let prev_ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token]).ok();
-                let ids = self.text_tokenizer.decode_piece_ids(&[prev_text_token, text_token]).ok();
-                prev_ids.and_then(|prev_ids| {
-                    ids.map(|ids| {
-                        if ids.len() > prev_ids.len() {
-                            ids[prev_ids.len()..].to_string()
-                        } else {
-                            String::new()
-                        }
-                    })
-                })
-            }
+            self.text_tokenizer.decode_piece_ids(&[text_token]).ok()
         } else {
             None
         }
@@ -160,12 +146,43 @@ impl Lm {
             text_tokenizer: self.text_tokenizer.clone(),
         };
         let mut decoder = ogg_opus::Decoder::new(24000, 1920)?;
+        let (audio_token_tx, audio_token_rx) =
+            std::sync::mpsc::sync_channel::<(Option<Vec<u32>>, u32)>(10);
+        let state_cfg = state.config().clone();
+        let dev_audio = dev.clone();
+        let mut audio_tokenizer_audio = audio_tokenizer.clone();
+        let out_tx_audio = out_tx.clone();
+        let _audio_processing_loop = tokio::task::spawn_blocking(move || {
+            let err = (|| {
+                for (audio_tokens, _text_token) in audio_token_rx {
+                    if let Some(audio_tokens) = audio_tokens {
+                        let cb = state_cfg.generated_audio_codebooks;
+                        // Using Tensor::from_vec is faster.
+                        let audio_tokens_t =
+                            Tensor::from_vec(audio_tokens[..cb].to_vec(), (1, cb, 1), &dev_audio)?;
+                        let pcm = audio_tokenizer_audio
+                            .decode_step(&audio_tokens_t.into(), &().into())?;
+                        if let Some(pcm) = pcm.as_option() {
+                            let pcm = pcm.i((0, 0))?.to_vec1::<f32>()?;
+                            out_tx_audio.send(WsEvent::Pcm(pcm))?;
+                        }
+                    }
+                }
+                Ok::<(), anyhow::Error>(())
+            })();
+            if let Err(err) = err {
+                tracing::error!(?err, "audio processing loop exited with error");
+            }
+        });
+
         let pcm_recv_handle = tokio::spawn(async move {
             let mut prev_text_token = state.config().text_start_token;
             tracing::info!("starting pcm recv loop");
             while let Some(opus) = opus_in_rx.recv().await {
                 if let Some(pcm) = decoder.decode(&opus)? {
-                    let pcm = Tensor::new(pcm, &dev)?.reshape((1, 1, ()))?;
+                    let pcm_len = pcm.len();
+                    // Using Tensor::from_vec is faster.
+                    let pcm = Tensor::from_vec(pcm.to_vec(), (1, 1, pcm_len), &dev)?;
                     let audio_tokens = audio_tokenizer.encode_step(&pcm.into(), &().into())?;
                     let audio_tokens = match audio_tokens.as_option() {
                         None => continue,
@@ -187,25 +204,17 @@ impl Lm {
                             out_tx.send(WsEvent::Text(text))?
                         }
                         event_tx.send(LogEvent::TextToken(text_token))?;
-                        tracing::info!(text_token, "sampled text token");
-                        if let Some(audio_tokens) = state.last_audio_tokens() {
-                            let audio_tokens_t = {
-                                let cb = state.config().generated_audio_codebooks;
-                                Tensor::from_slice(&audio_tokens[..cb], (1, cb, 1), &dev)?
-                            };
-                            event_tx.send(LogEvent::AudioTokens(audio_tokens))?;
-                            let pcm =
-                                audio_tokenizer.decode_step(&audio_tokens_t.into(), &().into())?;
-                            if let Some(pcm) = pcm.as_option() {
-                                let pcm = pcm.i((0, 0))?.to_vec1::<f32>()?;
-                                out_tx.send(WsEvent::Pcm(pcm))?;
-                            }
+                        tracing::debug!(text_token, "sampled text token");
+                        let last_audio_tokens = state.last_audio_tokens();
+                        if let Some(ref tokens) = last_audio_tokens {
+                            event_tx.send(LogEvent::AudioTokens(tokens.clone()))?;
                         }
+                        audio_token_tx.send((last_audio_tokens, text_token))?;
                         prev_text_token = text_token
                     }
                 }
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<(), anyhow::Error>(())
         });
         let send_handle = tokio::spawn(async move {
             use futures_util::SinkExt;
@@ -276,43 +285,51 @@ impl Lm {
             }
         };
         let events: Vec<_> = event_rx.try_iter().collect();
-        self.save_logs((), events)?;
+        let instance_name = self.instance_name.clone();
+        let log_dir = self.log_dir.clone();
+        crate::utils::spawn_blocking("save_lm_logs", move || {
+            save_logs((), events, &log_dir, &instance_name)
+        });
         Ok(())
     }
+}
 
-    fn save_logs(&self, query: (), events: Vec<LogEvent>) -> Result<()> {
-        let cpu = &Device::Cpu;
-        let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-        let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
-        let base_path = self.log_dir.join(format!("{}-lm-{secs}-{us}", self.instance_name));
-        let json_filename = base_path.with_extension("json");
-        let json_content = serde_json::to_string_pretty(&query)?;
-        std::fs::write(json_filename, json_content)?;
-        let st_filename = base_path.with_extension("safetensors");
-        let text_tokens: Vec<i64> = events
-            .iter()
-            .filter_map(|v| match v {
-                LogEvent::TextToken(v) => Some(*v as i64),
-                LogEvent::AudioTokens(_) => None,
-            })
-            .collect();
-        let text_len = text_tokens.len();
-        let text_tokens =
-            Tensor::from_vec(text_tokens, text_len, cpu)?.to_dtype(candle::DType::I64)?;
-        let audio_tokens: Vec<_> = events
-            .iter()
-            .filter_map(|v| match v {
-                LogEvent::TextToken(_) => None,
-                LogEvent::AudioTokens(a) => {
-                    let a = a.iter().map(|v| *v as i64).collect::<Vec<_>>();
-                    Some(Tensor::from_slice(&a, (1, a.len(), 1), cpu))
-                }
-            })
-            .collect::<candle::Result<Vec<_>>>()?;
-        let audio_tokens = Tensor::cat(&audio_tokens, 2)?;
-        let st_content =
-            std::collections::HashMap::from([("text", text_tokens), ("audio", audio_tokens)]);
-        candle::safetensors::save(&st_content, st_filename)?;
-        Ok(())
-    }
+fn save_logs(
+    query: (),
+    events: Vec<LogEvent>,
+    log_dir: &std::path::Path,
+    instance_name: &str,
+) -> Result<()> {
+    let cpu = &Device::Cpu;
+    let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
+    let base_path = log_dir.join(format!("{}-lm-{secs}-{us}", instance_name));
+    let json_filename = base_path.with_extension("json");
+    let json_content = serde_json::to_string_pretty(&query)?;
+    std::fs::write(json_filename, json_content)?;
+    let st_filename = base_path.with_extension("safetensors");
+    let text_tokens: Vec<i64> = events
+        .iter()
+        .filter_map(|v| match v {
+            LogEvent::TextToken(v) => Some(*v as i64),
+            LogEvent::AudioTokens(_) => None,
+        })
+        .collect();
+    let text_len = text_tokens.len();
+    let text_tokens = Tensor::from_vec(text_tokens, text_len, cpu)?.to_dtype(candle::DType::I64)?;
+    let audio_tokens: Vec<_> = events
+        .iter()
+        .filter_map(|v| match v {
+            LogEvent::TextToken(_) => None,
+            LogEvent::AudioTokens(a) => {
+                let a = a.iter().map(|v| *v as i64).collect::<Vec<_>>();
+                Some(Tensor::from_vec(a.to_vec(), (1, a.len(), 1), cpu))
+            }
+        })
+        .collect::<candle::Result<Vec<_>>>()?;
+    let audio_tokens = Tensor::cat(&audio_tokens, 2)?;
+    let st_content =
+        std::collections::HashMap::from([("text", text_tokens), ("audio", audio_tokens)]);
+    candle::safetensors::save(&st_content, st_filename)?;
+    Ok(())
 }

@@ -105,19 +105,15 @@ impl ScatteredCacheBuilder {
         if self.context <= seq_len {
             return self.indices_and_mask_abs(seq_len, batch_mask);
         }
-        let mut attention_masks = Vec::with_capacity(self.batch_size());
-        let mut cache_indices = Vec::with_capacity(self.batch_size());
+        let mut attention_masks = Vec::with_capacity(self.batch_size() * seq_len * context);
+        let mut cache_indices = Vec::with_capacity(self.batch_size() * seq_len);
         for (batch_i, &batch_mask) in batch_mask.iter().enumerate() {
             if !batch_mask {
-                let masks: Vec<Vec<f32>> = vec![vec![0.0; context]; seq_len];
-                let indices = vec![self.indices[batch_i] as u32; seq_len];
-                attention_masks.push(masks);
-                cache_indices.push(indices);
+                attention_masks.extend(std::iter::repeat(0.0).take(seq_len * context));
+                cache_indices.extend(std::iter::repeat(self.indices[batch_i] as u32).take(seq_len));
             } else {
                 let start_index = self.indices[batch_i];
                 let start_pos = self.positions[batch_i];
-                let mut masks: Vec<Vec<f32>> = Vec::with_capacity(seq_len);
-                let mut indices = Vec::with_capacity(seq_len);
                 let mut all_pos = vec![usize::MAX; context];
                 if start_pos < context {
                     for i in 0..start_pos {
@@ -132,36 +128,29 @@ impl ScatteredCacheBuilder {
                 }
                 for seq_i in 0..seq_len {
                     let index = self.indices[batch_i];
-                    all_pos[index] = seq_i + start_pos;
-                    indices.push(index as u32);
+                    let my_pos = seq_i + start_pos;
+                    all_pos[index] = my_pos;
+                    cache_indices.push(index as u32);
+
+                    for &pos in all_pos.iter() {
+                        attention_masks.push(if pos <= my_pos { 0.0 } else { f32::NEG_INFINITY });
+                    }
+
                     self.indices[batch_i] += 1;
                     self.positions[batch_i] += 1;
                     if self.indices[batch_i] >= self.context {
                         self.indices[batch_i] = 0;
                     }
                 }
-
-                for seq_i in 0..seq_len {
-                    let my_pos = seq_i + start_pos;
-                    let mask = all_pos
-                        .iter()
-                        .map(|&pos| if pos <= my_pos { 0.0 } else { f32::NEG_INFINITY })
-                        .collect::<Vec<f32>>();
-                    masks.push(mask);
-                }
-
-                attention_masks.push(masks);
-                cache_indices.push(indices);
             }
         }
-        // Flattening the attention mask then using Tensor::from_vec rather using Tensor::new ends
-        // up being almost 10x faster with candle 0.9.0. The slowness seems to be on the CPU
-        // copies, to be further investigated.
-        let attention_masks =
-            attention_masks.into_iter().flat_map(|m| m.into_iter().flatten()).collect::<Vec<f32>>();
-        let mask = Tensor::from_vec(attention_masks, ((), 1, seq_len, context), self.device())?
-            .to_dtype(self.dtype)?;
-        let indices = Tensor::new(cache_indices, self.device())?;
+        let mask = Tensor::from_vec(
+            attention_masks,
+            (self.batch_size(), 1, seq_len, context),
+            self.device(),
+        )?
+        .to_dtype(self.dtype)?;
+        let indices = Tensor::from_vec(cache_indices, (self.batch_size(), seq_len), self.device())?;
         Ok(IndicesAndMask { indices, mask })
     }
 

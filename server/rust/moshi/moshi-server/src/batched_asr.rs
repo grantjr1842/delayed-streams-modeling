@@ -117,8 +117,8 @@ impl Drop for Channel {
 
 struct Logger {
     base_path: std::path::PathBuf,
-    log_tx: std::sync::mpsc::Sender<(Tensor, Tensor)>,
-    log_rx: std::sync::mpsc::Receiver<(Tensor, Tensor)>,
+    log_tx: std::sync::mpsc::Sender<(Vec<u32>, Vec<Vec<u32>>)>,
+    log_rx: std::sync::mpsc::Receiver<(Vec<u32>, Vec<Vec<u32>>)>,
     log_frequency_s: f64,
 }
 
@@ -131,7 +131,7 @@ impl Logger {
         let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
         let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
         let base_path = log_dir.as_ref().join(format!("{instance_name}-asr-{secs}-{us}"));
-        let (log_tx, log_rx) = std::sync::mpsc::channel::<(Tensor, Tensor)>();
+        let (log_tx, log_rx) = std::sync::mpsc::channel::<(Vec<u32>, Vec<Vec<u32>>)>();
         Ok(Self { base_path, log_tx, log_rx, log_frequency_s })
     }
 
@@ -148,13 +148,31 @@ impl Logger {
                 }
                 let st_filename = self.base_path.with_extension(format!("{cnt}.safetensors"));
                 tracing::info!(?st_filename, "writing logs");
-                let (text_tokens, audio_tokens): (Vec<_>, Vec<_>) = tokens.into_iter().unzip();
-                let write = || {
-                    let text_tokens = Tensor::cat(&text_tokens, candle::D::Minus1)?;
-                    let audio_tokens = Tensor::cat(&audio_tokens, candle::D::Minus1)?;
+                let (text_tokens_captured, audio_tokens_captured): (Vec<_>, Vec<_>) =
+                    tokens.into_iter().unzip();
+                let write = move || {
+                    let num_steps = text_tokens_captured.len();
+                    if num_steps == 0 {
+                        return Ok(());
+                    }
+                    let batch_size = text_tokens_captured[0].len();
+                    let text_tokens_flat: Vec<u32> =
+                        text_tokens_captured.into_iter().flatten().collect();
+                    let text_tokens =
+                        Tensor::from_vec(text_tokens_flat, (batch_size, num_steps), &Device::Cpu)?;
+
+                    let num_codebooks = audio_tokens_captured[0].len();
+                    let audio_tokens_flat: Vec<u32> =
+                        audio_tokens_captured.into_iter().flatten().flatten().collect();
+                    let audio_tokens = Tensor::from_vec(
+                        audio_tokens_flat,
+                        (batch_size, num_codebooks, num_steps),
+                        &Device::Cpu,
+                    )?;
+
                     let st_content = std::collections::HashMap::from([
-                        ("text", text_tokens),
-                        ("audio", audio_tokens),
+                        ("text", text_tokens.to_dtype(DType::I64)?),
+                        ("audio", audio_tokens.to_dtype(DType::I64)?),
                     ]);
                     candle::safetensors::save(&st_content, st_filename)?;
                     Ok::<_, anyhow::Error>(())
@@ -272,29 +290,22 @@ impl BatchedAsrInner {
                 if with_data > 0 {
                     let mask = moshi::StreamMask::new(mask, &dev)?;
                     let pcm =
-                        Tensor::new(batch_pcm.as_slice(), &dev)?.reshape((batch_size, 1, ()))?;
+                        Tensor::from_vec(batch_pcm.clone(), (batch_size, 1, FRAME_SIZE), &dev)?;
                     let start_time = std::time::Instant::now();
                     let asr_msgs = state.step_pcm(
                         pcm,
                         conditions.as_ref(),
                         &mask,
                         |_, text_tokens, audio_tokens| {
-                            let res = || {
-                                if let Some(log_tx) = log_tx.as_ref() {
-                                    let text_tokens = text_tokens.to_device(&Device::Cpu)?;
-                                    let audio_tokens: Vec<Tensor> = audio_tokens
-                                        .iter()
-                                        .map(|t| t.to_device(&Device::Cpu))
-                                        .collect::<candle::Result<Vec<_>>>()?;
-                                    let audio_tokens = Tensor::stack(&audio_tokens, 1)?;
-                                    if let Err(err) = log_tx.send((text_tokens, audio_tokens)) {
-                                        tracing::error!(?err, "failed to send log");
-                                    };
+                            if let Some(log_tx) = log_tx.as_ref() {
+                                let text_tokens = text_tokens.to_vec1::<u32>().unwrap_or_default();
+                                let audio_tokens = audio_tokens
+                                    .iter()
+                                    .map(|t| t.to_vec1::<u32>().unwrap_or_default())
+                                    .collect();
+                                if let Err(err) = log_tx.send((text_tokens, audio_tokens)) {
+                                    tracing::error!(?err, "failed to send log");
                                 }
-                                Ok::<_, anyhow::Error>(())
-                            };
-                            if let Err(err) = res() {
-                                tracing::error!(?err, "failed to send log");
                             }
                         },
                     )?;

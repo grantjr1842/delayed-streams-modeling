@@ -53,13 +53,13 @@ impl ItemState {
 }
 
 pub struct State {
-    asr_delay_in_tokens: usize,
-    model_step_idx: usize,
-    temperature: f64,
-    lm: LmModel,
-    audio_tokenizer: Mimi,
-    device: candle::Device,
-    batch: Vec<ItemState>,
+    pub asr_delay_in_tokens: usize,
+    pub model_step_idx: usize,
+    pub temperature: f64,
+    pub lm: LmModel,
+    pub audio_tokenizer: Mimi,
+    pub device: candle::Device,
+    pub batch: Vec<ItemState>,
 }
 
 impl State {

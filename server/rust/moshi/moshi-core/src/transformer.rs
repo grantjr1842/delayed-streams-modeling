@@ -8,7 +8,9 @@
 // more efficient matmuls
 // 2. Quantized tensors cannot be easily split (regarding cross attention and QKV proj weights)
 // 3. Linear and Quantized linear layers are two different types
-use crate::nn::{linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder};
+use crate::nn::{
+    linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder,
+};
 use crate::streaming::{StreamMask, StreamTensor, StreamingModule};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 
@@ -147,7 +149,9 @@ impl XaGate {
                     CrossAttentionGating::ConditionalGatedSigmoidLearnableBias
                         | CrossAttentionGating::ConditionalGatedTanhLearnableBias
                 );
-                let alpha_vb = if vb.contains_key("alpha.0.weight") || vb.contains_key("alpha.0.in_proj.weight") {
+                let alpha_vb = if vb.contains_key("alpha.0.weight")
+                    || vb.contains_key("alpha.0.in_proj.weight")
+                {
                     vb.pp("alpha")
                 } else if vb.contains_key("0.weight") || vb.contains_key("0.in_proj.weight") {
                     vb.pp("")
@@ -390,8 +394,8 @@ impl RotaryEmbedding {
     pub fn rope(&self, pos: &Tensor) -> Result<Rope> {
         let t = pos.to_dtype(DType::F32)?;
         let freqs = match *t.dims() {
-            [d] => t.reshape((d, 1))?.matmul(&self.inv_freq)?,
-            [b, d] => t.reshape((b * d, 1))?.matmul(&self.inv_freq)?.reshape((b, d, ()))?,
+            [d] => t.reshape((d, 1))?.broadcast_mul(&self.inv_freq)?,
+            [b, d] => t.reshape((b, d, 1))?.broadcast_mul(&self.inv_freq)?,
             _ => candle::bail!("Invalid shape for rotary embedding {pos:?}"),
         };
         Ok(Rope { sin: freqs.sin()?, cos: freqs.cos()? })
@@ -437,7 +441,8 @@ impl StreamingMultiheadAttention {
         let in_proj_bias =
             if cfg.bias_attn { Some(vb.get_unquantized(out_dim, "in_proj_bias")?) } else { None };
         let in_proj = linear_from(in_proj_weight, in_proj_bias)?;
-        let out_proj = linear(embed_dim, cfg.num_heads * head_dim, cfg.bias_attn, vb.pp("out_proj"))?;
+        let out_proj =
+            linear(embed_dim, cfg.num_heads * head_dim, cfg.bias_attn, vb.pp("out_proj"))?;
         Ok(Self {
             in_proj,
             out_proj,
@@ -446,7 +451,7 @@ impl StreamingMultiheadAttention {
             head_dim,
             context: cfg.context,
             kv_cache: KvCache::new(2, cfg.context),
-            use_flash_attn: false,
+            use_flash_attn: true,
             span: tracing::span!(tracing::Level::TRACE, "mha"),
         })
     }
@@ -486,7 +491,7 @@ impl StreamingMultiheadAttention {
             k = rope.apply_rotary_emb(&k)?;
         }
 
-        let (k, v) = { self.kv_cache.append(&k.contiguous()?, &v.contiguous()?)? };
+        let (k, v) = { self.kv_cache.append(&k, &v)? };
         // The KV cache keeps all the data at the moment, we want to trim
         // down the part that comes from the cache to at most context to
         // be coherent with the mask shape we provide.
@@ -500,12 +505,23 @@ impl StreamingMultiheadAttention {
             (k.clone(), v.clone())
         };
 
-        let xs = if q.dtype() == DType::BF16 && self.use_flash_attn {
+        let xs = if (q.dtype() == DType::BF16 || q.dtype() == DType::F16)
+            && self.use_flash_attn
+            && q.device().is_cuda()
+        {
             let q = q.transpose(1, 2)?;
             let k = k.transpose(1, 2)?;
             let v = v.transpose(1, 2)?;
             let softmax_scale = 1f32 / (self.head_dim as f32).sqrt();
-            flash_attn(&q, &k, &v, softmax_scale, mask.is_some())?.transpose(1, 2)?
+            tracing::debug!(
+                head_dim = self.head_dim,
+                num_heads = self.num_heads,
+                dtype = ?q.dtype(),
+                "using flash_attn"
+            );
+            tracing::trace_span!("flash_attn")
+                .in_scope(|| flash_attn(&q, &k, &v, softmax_scale, mask.is_some()))?
+                .transpose(1, 2)?
         } else {
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
             let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;

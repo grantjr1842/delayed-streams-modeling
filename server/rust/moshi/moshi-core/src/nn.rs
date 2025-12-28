@@ -66,7 +66,9 @@ impl MaybeQuantizedVarBuilder<'_> {
         match self {
             // Preserve VarBuilder's dtype instead of forcing F32
             Self::Real(weights) => weights.get(s, path),
-            Self::Quantized(weights) => weights.get(s, path)?.dequantize(weights.device())?.to_dtype(self.dtype()),
+            Self::Quantized(weights) => {
+                weights.get(s, path)?.dequantize(weights.device())?.to_dtype(self.dtype())
+            }
         }
     }
 

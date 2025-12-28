@@ -12,6 +12,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod asr;
 mod auth;
 mod banner;
@@ -28,8 +31,6 @@ mod tts_preprocess;
 mod utils;
 
 const ROOM_ID_HEADER: &str = "room_id";
-
-
 
 #[derive(clap::Parser, Debug)]
 struct WorkerArgs {
@@ -66,6 +67,14 @@ struct WorkerArgs {
     /// Console log style: compact, pretty, or verbose (default: pretty)
     #[clap(long, default_value = "pretty")]
     log_style: String,
+
+    /// Disable CUDA event tracking to reduce overhead (default: false, set --disable-cuda-events to disable)
+    #[clap(long)]
+    disable_cuda_events: bool,
+
+    /// Enable TF32 for CUDA to speed up matmuls on Ampere+ GPUs (default: true)
+    #[clap(long, default_value = "true", action = clap::ArgAction::Set)]
+    enable_tf32: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -204,47 +213,103 @@ pub struct Config {
 impl Config {
     pub fn load<P: AsRef<std::path::Path>>(p: P) -> Result<Self> {
         use utils::resolve_or_download as rod;
-        let config = std::fs::read_to_string(p)?;
-        let mut config: Self = toml::from_str(&config)?;
+        let config_str = std::fs::read_to_string(p)?;
+        let mut config: Self = toml::from_str(&config_str)?;
 
         // Derive auth config from environment.
         config.auth = auth::AuthConfig::from_env();
 
-        for (_, c) in config.modules.iter_mut() {
+        // Collect all paths that need to be resolved.
+        let mut paths = Vec::new();
+
+        // Helper to add a path to our collection list.
+        fn add_path(paths: &mut Vec<String>, path: &str) {
+            paths.push(path.to_string());
+        }
+
+        for (_, c) in config.modules.iter() {
             match c {
-                ModuleConfig::Mimi { send_path: _, recv_path: _, config: c } => {
-                    c.audio_tokenizer_file = rod(&c.audio_tokenizer_file)?;
+                ModuleConfig::Mimi { config: c, .. } => {
+                    add_path(&mut paths, &c.audio_tokenizer_file);
                 }
-                ModuleConfig::Tts { path: _, config: c } => {
-                    c.lm_model_file = rod(&c.lm_model_file)?;
-                    c.text_tokenizer_file = rod(&c.text_tokenizer_file)?;
-                    c.speaker_tokenizer_file = rod(&c.speaker_tokenizer_file)?;
-                    c.audio_tokenizer_file = rod(&c.audio_tokenizer_file)?;
-                    for (_, v) in c.voices.iter_mut() {
-                        *v = rod(v)?
+                ModuleConfig::Tts { config: c, .. } => {
+                    add_path(&mut paths, &c.lm_model_file);
+                    add_path(&mut paths, &c.text_tokenizer_file);
+                    add_path(&mut paths, &c.speaker_tokenizer_file);
+                    add_path(&mut paths, &c.audio_tokenizer_file);
+                    for (_, v) in c.voices.iter() {
+                        add_path(&mut paths, v);
                     }
-                    c.voice_dir = rod(&c.voice_dir)?;
+                    add_path(&mut paths, &c.voice_dir);
                 }
-                ModuleConfig::BatchedAsr { path: _, config: c, batch_size: _ } => {
-                    c.lm_model_file = rod(&c.lm_model_file)?;
-                    c.text_tokenizer_file = rod(&c.text_tokenizer_file)?;
-                    c.audio_tokenizer_file = rod(&c.audio_tokenizer_file)?;
+                ModuleConfig::BatchedAsr { config: c, .. } => {
+                    add_path(&mut paths, &c.lm_model_file);
+                    add_path(&mut paths, &c.text_tokenizer_file);
+                    add_path(&mut paths, &c.audio_tokenizer_file);
                 }
-                ModuleConfig::Asr { path: _, config: c } => {
-                    c.lm_model_file = rod(&c.lm_model_file)?;
-                    c.text_tokenizer_file = rod(&c.text_tokenizer_file)?;
-                    c.audio_tokenizer_file = rod(&c.audio_tokenizer_file)?;
+                ModuleConfig::Asr { config: c, .. } => {
+                    add_path(&mut paths, &c.lm_model_file);
+                    add_path(&mut paths, &c.text_tokenizer_file);
+                    add_path(&mut paths, &c.audio_tokenizer_file);
                 }
-                ModuleConfig::Lm { path: _, config: c } => {
-                    c.audio_tokenizer_file = rod(&c.audio_tokenizer_file)?;
-                    c.text_tokenizer_file = rod(&c.text_tokenizer_file)?;
-                    c.lm_model_file = rod(&c.lm_model_file)?;
+                ModuleConfig::Lm { config: c, .. } => {
+                    add_path(&mut paths, &c.audio_tokenizer_file);
+                    add_path(&mut paths, &c.text_tokenizer_file);
+                    add_path(&mut paths, &c.lm_model_file);
                 }
             }
         }
-        config.static_dir = rod(&config.static_dir)?;
-        config.log_dir = rod(&config.log_dir)?;
-        config.instance_name = rod(&config.instance_name)?;
+        add_path(&mut paths, &config.static_dir);
+        add_path(&mut paths, &config.log_dir);
+        add_path(&mut paths, &config.instance_name);
+
+        // Resolve all paths in parallel.
+        use rayon::prelude::*;
+        let resolved_paths: Result<std::collections::HashMap<String, String>> = paths
+            .into_par_iter()
+            .map(|p| {
+                let resolved = rod(&p)?;
+                Ok((p, resolved))
+            })
+            .collect();
+        let resolved_paths = resolved_paths?;
+
+        // Update the config with resolved paths.
+        for (_, c) in config.modules.iter_mut() {
+            match c {
+                ModuleConfig::Mimi { config: c, .. } => {
+                    c.audio_tokenizer_file = resolved_paths[&c.audio_tokenizer_file].clone();
+                }
+                ModuleConfig::Tts { config: c, .. } => {
+                    c.lm_model_file = resolved_paths[&c.lm_model_file].clone();
+                    c.text_tokenizer_file = resolved_paths[&c.text_tokenizer_file].clone();
+                    c.speaker_tokenizer_file = resolved_paths[&c.speaker_tokenizer_file].clone();
+                    c.audio_tokenizer_file = resolved_paths[&c.audio_tokenizer_file].clone();
+                    for (_, v) in c.voices.iter_mut() {
+                        *v = resolved_paths[v].clone();
+                    }
+                    c.voice_dir = resolved_paths[&c.voice_dir].clone();
+                }
+                ModuleConfig::BatchedAsr { config: c, .. } => {
+                    c.lm_model_file = resolved_paths[&c.lm_model_file].clone();
+                    c.text_tokenizer_file = resolved_paths[&c.text_tokenizer_file].clone();
+                    c.audio_tokenizer_file = resolved_paths[&c.audio_tokenizer_file].clone();
+                }
+                ModuleConfig::Asr { config: c, .. } => {
+                    c.lm_model_file = resolved_paths[&c.lm_model_file].clone();
+                    c.text_tokenizer_file = resolved_paths[&c.text_tokenizer_file].clone();
+                    c.audio_tokenizer_file = resolved_paths[&c.audio_tokenizer_file].clone();
+                }
+                ModuleConfig::Lm { config: c, .. } => {
+                    c.audio_tokenizer_file = resolved_paths[&c.audio_tokenizer_file].clone();
+                    c.text_tokenizer_file = resolved_paths[&c.text_tokenizer_file].clone();
+                    c.lm_model_file = resolved_paths[&c.lm_model_file].clone();
+                }
+            }
+        }
+        config.static_dir = resolved_paths[&config.static_dir].clone();
+        config.log_dir = resolved_paths[&config.log_dir].clone();
+        config.instance_name = resolved_paths[&config.instance_name].clone();
         Ok(config)
     }
 }
@@ -299,7 +364,10 @@ fn lm_router(s: Arc<lm::Lm>, path: &str) -> axum::Router<()> {
         }
         tracing::info!("handling lm-streaming query");
         let state = state.0.clone();
-        let upg = ws.write_buffer_size(0).on_upgrade(move |v| lm_websocket(v, state, addr));
+        let upg = ws
+            .write_buffer_size(0)
+            .protocols(["permessage-deflate"])
+            .on_upgrade(move |v| lm_websocket(v, state, addr));
         Ok(upg)
     }
 
@@ -436,22 +504,35 @@ struct AppStateInner {
 type AppState = Arc<AppStateInner>;
 
 impl AppStateInner {
-    fn new(args: &WorkerArgs, config: Config) -> Result<Self> {
+    async fn new(args: &WorkerArgs, config: Config) -> Result<Self> {
         let device = device(args.cpu)?;
 
-        // The following does not have a significant impact as soon as batch sizes are
-        // large enough so we don't activate it for now.
-        // #[cfg(feature = "cuda")]
-        // if let candle::Device::Cuda(d) = &device {
-        //     unsafe {
-        //         d.disable_event_tracking();
-        //     }
-        // };
+        #[cfg(feature = "cuda")]
+        if let candle::Device::Cuda(d) = &device {
+            unsafe {
+                if args.disable_cuda_events {
+                    tracing::info!("disabling CUDA event tracking");
+                    d.disable_event_tracking();
+                }
+                if args.enable_tf32 {
+                    tracing::info!("enabling TF32");
+                    d.set_tf32(true);
+                }
+            }
+        };
 
-        let mut modules = Vec::with_capacity(config.modules.len());
+        let mut modules_f = Vec::with_capacity(config.modules.len());
         for (_, module_cfg) in config.modules.iter() {
-            let m = Module::new(module_cfg, &config, &device, &config.warmup)?;
-            modules.push(m)
+            let config = config.clone();
+            let device = device.clone();
+            let module_cfg = module_cfg.clone();
+            modules_f.push(tokio::task::spawn_blocking(move || {
+                Module::new(&module_cfg, &config, &device, &config.warmup)
+            }));
+        }
+        let mut modules = Vec::with_capacity(modules_f.len());
+        for m in modules_f {
+            modules.push(m.await??);
         }
         Ok(Self { modules })
     }
@@ -615,7 +696,9 @@ async fn main_() -> Result<()> {
     let args = <Args as clap::Parser>::parse();
     match args.command {
         Command::Configs { which } => {
-            eprintln!("The 'configs' command has been removed. Python scripts are no longer embedded.");
+            eprintln!(
+                "The 'configs' command has been removed. Python scripts are no longer embedded."
+            );
             eprintln!("Unknown config: {which}");
             std::process::exit(1);
         }
@@ -856,7 +939,7 @@ async fn main_() -> Result<()> {
 
             let static_dir = utils::resolve_or_download(&config.static_dir)?;
             let shared_state = Arc::new(SharedStateInner { config: config.clone() });
-            let state = Arc::new(AppStateInner::new(&args, config)?);
+            let state = Arc::new(AppStateInner::new(&args, config).await?);
             // Initialize server start time for uptime tracking
             init_server_start_time();
 
@@ -1066,17 +1149,6 @@ mod tests {
 fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<()> {
     use base64::Engine;
 
-    async fn tts_websocket(
-        socket: axum::extract::ws::WebSocket,
-        state: Arc<tts::Model>,
-        query: TtsStreamingQuery,
-        _addr: Option<String>,
-    ) {
-        if let Err(err) = state.handle_socket(socket, query).await {
-            tracing::error!(?err, "tts")
-        }
-    }
-
     async fn t(
         state: axum::extract::State<(Arc<tts::Model>, SharedState)>,
         headers: axum::http::HeaderMap,
@@ -1126,7 +1198,7 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
         let tts_query = req.0.clone();
         let tts = state.0 .0.clone();
         let upg =
-            ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
+            ws.write_buffer_size(0).protocols(["permessage-deflate"]).on_upgrade(move |mut socket| async move {
                 match &auth_result {
                     Err(err) => {
                         tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
@@ -1141,7 +1213,9 @@ fn tts_router(s: Arc<tts::Model>, path: &str, ss: &SharedState) -> axum::Router<
                         tracing::debug!(user_id = %claims.user.id, session_id = %claims.session.id, "authenticated via JWT");
                     }
                 }
-                tts_websocket(socket, tts, tts_query, addr).await
+                if let Err(err) = tts.handle_socket(socket, tts_query).await {
+                    tracing::error!(?err, "tts socket handler failed");
+                }
             });
         Ok(upg)
     }
@@ -1348,8 +1422,6 @@ struct AsrStreamingQuery {
     token: Option<String>,
 }
 
-
-
 fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()> {
     async fn asr_websocket(
         socket: axum::extract::ws::WebSocket,
@@ -1382,19 +1454,21 @@ fn asr_router(s: Arc<asr::Asr>, path: &str, ss: &SharedState) -> axum::Router<()
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
-        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-            if let Err(err) = auth_result {
-                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                let _ = crate::utils::close_with_reason(
-                    &mut socket,
-                    crate::protocol::CloseCode::AuthenticationFailed,
-                    Some("Authentication failed"),
-                )
-                .await;
-                return;
-            }
-            asr_websocket(socket, asr, asr_query, addr).await
-        });
+        let upg = ws.write_buffer_size(0).protocols(["permessage-deflate"]).on_upgrade(
+            move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    )
+                    .await;
+                    return;
+                }
+                asr_websocket(socket, asr, asr_query, addr).await
+            },
+        );
         Ok(upg)
     }
     axum::Router::new()
@@ -1458,19 +1532,21 @@ fn batched_asr_router(
 
         let asr_query = req.0.clone();
         let asr = state.0 .0.clone();
-        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-            if let Err(err) = auth_result {
-                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                let _ = crate::utils::close_with_reason(
-                    &mut socket,
-                    crate::protocol::CloseCode::AuthenticationFailed,
-                    Some("Authentication failed"),
-                )
-                .await;
-                return;
-            }
-            asr_websocket(socket, asr, asr_query, addr).await
-        });
+        let upg = ws.write_buffer_size(0).protocols(["permessage-deflate"]).on_upgrade(
+            move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    )
+                    .await;
+                    return;
+                }
+                asr_websocket(socket, asr, asr_query, addr).await
+            },
+        );
         Ok(upg)
     }
     axum::Router::new()
@@ -1525,19 +1601,21 @@ fn mimi_router(
             None => req.room_id.clone(),
         };
         let state = state.0 .0.clone();
-        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-            if let Err(err) = auth_result {
-                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                let _ = crate::utils::close_with_reason(
-                    &mut socket,
-                    crate::protocol::CloseCode::AuthenticationFailed,
-                    Some("Authentication failed"),
-                )
-                .await;
-                return;
-            }
-            mimi_recv_websocket(socket, state, room_id, addr).await
-        });
+        let upg = ws.write_buffer_size(0).protocols(["permessage-deflate"]).on_upgrade(
+            move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
+                    let _ = crate::utils::close_with_reason(
+                        &mut socket,
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
+                    )
+                    .await;
+                    return;
+                }
+                mimi_recv_websocket(socket, state, room_id, addr).await
+            },
+        );
         Ok(upg)
     }
 
@@ -1572,35 +1650,37 @@ fn mimi_router(
         };
 
         let state = state.0 .0;
-        let upg = ws.write_buffer_size(0).on_upgrade(move |mut socket| async move {
-            if let Err(err) = auth_result {
-                tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
-                let _ = crate::utils::close_with_reason(
-                    &mut socket,
-                    crate::protocol::CloseCode::AuthenticationFailed,
-                    Some("Authentication failed"),
-                )
-                .await;
-                return;
-            }
-
-            let room_id = match room_id {
-                Ok(id) => id,
-                Err(err) => {
-                    tracing::error!(?err, "no room_id, closing socket");
-                    // We could send a CloseCode::InvalidMessage here
+        let upg = ws.write_buffer_size(0).protocols(["permessage-deflate"]).on_upgrade(
+            move |mut socket| async move {
+                if let Err(err) = auth_result {
+                    tracing::warn!(?err, "WebSocket auth failed, closing with 4001");
                     let _ = crate::utils::close_with_reason(
                         &mut socket,
-                        crate::protocol::CloseCode::InvalidMessage,
-                        Some("Missing room_id"),
+                        crate::protocol::CloseCode::AuthenticationFailed,
+                        Some("Authentication failed"),
                     )
                     .await;
                     return;
                 }
-            };
 
-            mimi_send_websocket(socket, state, room_id, addr).await
-        });
+                let room_id = match room_id {
+                    Ok(id) => id,
+                    Err(err) => {
+                        tracing::error!(?err, "no room_id, closing socket");
+                        // We could send a CloseCode::InvalidMessage here
+                        let _ = crate::utils::close_with_reason(
+                            &mut socket,
+                            crate::protocol::CloseCode::InvalidMessage,
+                            Some("Missing room_id"),
+                        )
+                        .await;
+                        return;
+                    }
+                };
+
+                mimi_send_websocket(socket, state, room_id, addr).await
+            },
+        );
         Ok(upg)
     }
     axum::Router::new()

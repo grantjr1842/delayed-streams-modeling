@@ -1,36 +1,30 @@
-# Implementation Plan: Performance Optimizations (Refined)
+# Implementation Plan: Comprehensive Performance Optimizations
 
-## Master Issue: Performance Optimization Suite
+## Master Issue: #99
 
-This plan covers the implementation of targeted performance optimizations to reduce latency and improve throughput of the Moshi server.
+This plan covers the final stages of the performance optimization suite, focusing on pipelining and final verification.
 
-### 1. Configurable Hardware Optimizations
-- **Goal**: Allow users to toggle CUDA event tracking and TF32.
-- **Location**: `server/rust/moshi/moshi-server/src/main.rs`.
+### 1. Pipelining Mimi and LM in ASR
+- **Goal**: Reduce inter-token latency by overlapping Mimi encoding and LM inference.
+- **Status**:
+  - Completed for single-stream `asr.rs`.
+  - Pending for `batched_asr.rs`.
 - **Implementation**:
-    - Verify `--disable-cuda-events` and `--enable-tf32` flags in `WorkerArgs`.
-    - Ensure they are applied to the CUDA device during startup.
+  - Refactor `BatchedAsrInner::start_model_loop` to use a multi-stage pipeline.
+  - Ensure `pre_process` and `post_process` work correctly with the pipeline delay.
 
-### 2. Verified Flash Attention
-- **Goal**: Confirm and log Flash Attention usage.
-- **Location**: `server/rust/moshi/moshi-core/src/transformer.rs`.
+### 2. Final Verification & Benchmarking
+- **Goal**: Quantify improvements and ensure no regressions.
 - **Implementation**:
-    - Add a `tracing::debug!` or `info!` message when Flash Attention is invoked.
-    - Check if `use_flash_attn` can be made configurable.
+  - Run `moshi-server` with various configurations.
+  - Use `nsys profile` to capture new traces.
+  - Document results in `walkthrough.md`.
 
-### 3. Optimized Device Transfers for Logging
-- **Goal**: Minimize blocking during GPU -> CPU transfers for token logging.
-- **Location**: `server/rust/moshi/moshi-server/src/asr.rs`, `server/rust/moshi/moshi-server/src/tts.rs`.
+### 3. Pull Request & Merging
+- **Goal**: Merge all optimizations into `main`.
 - **Implementation**:
-    - Move `to_device(&Device::Cpu)` calls into background tasks.
-    - Use asynchronous transfers if available in candle or ensure they don't block the main inference loop.
-
-### 4. Advanced Audio Pipeline Overlapping
-- **Goal**: Reduce inter-token latency.
-- **Location**: `server/rust/moshi/moshi-server/src/tts.rs` and `asr.rs`.
-- **Implementation**:
-    - Review `inference_loop` and `audio_processing_loop` in `tts.rs`.
-    - Ensure Mimi decoding/encoding is not serializing with the next LM step.
+  - Create a single comprehensive PR linking all sub-issues.
+  - Merge after successful CI/verification.
 
 ## Verification Plan
 - Run existing benchmarks: `cargo bench` or equivalent if available.

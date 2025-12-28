@@ -175,43 +175,61 @@ impl Lm {
             }
         });
 
-        let pcm_recv_handle = tokio::spawn(async move {
+        let (pcm_tx, pcm_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(100);
+        let (mimi_tx, mimi_rx) = std::sync::mpsc::sync_channel::<Vec<Vec<u32>>>(100);
+        let mimi_dev = dev.clone();
+        let mut mimi_tokenizer = audio_tokenizer.clone();
+        let encoder_handle = crate::utils::spawn_blocking("mimi_encode_loop", move || {
+            for pcm_vec in pcm_rx {
+                let pcm_len = pcm_vec.len();
+                let pcm = Tensor::from_vec(pcm_vec, (1, 1, pcm_len), &mimi_dev)?;
+                let audio_tokens = mimi_tokenizer.encode_step(&pcm.into(), &().into())?;
+                if let Some(audio_tokens) = audio_tokens.as_option() {
+                    let (_one, _codebooks, steps) = audio_tokens.dims3()?;
+                    let mut all_steps = Vec::with_capacity(steps);
+                    for step in 0..steps {
+                        let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
+                        all_steps.push(codes);
+                    }
+                    mimi_tx.send(all_steps)?;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let inference_handle = crate::utils::spawn_blocking("inference_loop", move || {
             let mut prev_text_token = state.config().text_start_token;
+            for steps_tokens in mimi_rx {
+                for codes in steps_tokens {
+                    let text_token = state.step_(
+                        Some(prev_text_token),
+                        &codes,
+                        None,
+                        None,
+                        conditions.as_ref(),
+                    )?;
+
+                    if let Some(text) = text_decoder.text(prev_text_token, text_token) {
+                        out_tx.send(WsEvent::Text(text))?
+                    }
+                    event_tx.send(LogEvent::TextToken(text_token))?;
+                    tracing::debug!(text_token, "sampled text token");
+                    let last_audio_tokens = state.last_audio_tokens();
+                    if let Some(ref tokens) = last_audio_tokens {
+                        event_tx.send(LogEvent::AudioTokens(tokens.clone()))?;
+                    }
+                    audio_token_tx.send((last_audio_tokens, text_token))?;
+                    prev_text_token = text_token
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let pcm_recv_handle = tokio::spawn(async move {
             tracing::info!("starting pcm recv loop");
             while let Some(opus) = opus_in_rx.recv().await {
                 if let Some(pcm) = decoder.decode(&opus)? {
-                    let pcm_len = pcm.len();
-                    // Using Tensor::from_vec is faster.
-                    let pcm = Tensor::from_vec(pcm.to_vec(), (1, 1, pcm_len), &dev)?;
-                    let audio_tokens = audio_tokenizer.encode_step(&pcm.into(), &().into())?;
-                    let audio_tokens = match audio_tokens.as_option() {
-                        None => continue,
-                        Some(audio_tokens) => audio_tokens,
-                    };
-                    let (_one, _codebooks, steps) = audio_tokens.dims3()?;
-
-                    for step in 0..steps {
-                        let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
-                        let text_token = state.step_(
-                            Some(prev_text_token),
-                            &codes,
-                            None,
-                            None,
-                            conditions.as_ref(),
-                        )?;
-
-                        if let Some(text) = text_decoder.text(prev_text_token, text_token) {
-                            out_tx.send(WsEvent::Text(text))?
-                        }
-                        event_tx.send(LogEvent::TextToken(text_token))?;
-                        tracing::debug!(text_token, "sampled text token");
-                        let last_audio_tokens = state.last_audio_tokens();
-                        if let Some(ref tokens) = last_audio_tokens {
-                            event_tx.send(LogEvent::AudioTokens(tokens.clone()))?;
-                        }
-                        audio_token_tx.send((last_audio_tokens, text_token))?;
-                        prev_text_token = text_token
-                    }
+                    pcm_tx.send(pcm.to_vec())?;
                 }
             }
             Ok::<(), anyhow::Error>(())
@@ -276,6 +294,12 @@ impl Lm {
             }
             r = pcm_recv_handle => {
                 tracing::error!(?r, "pcm recv loop ended")
+            }
+            r = encoder_handle => {
+                tracing::error!(?r, "mimi encode loop ended")
+            }
+            r = inference_handle => {
+                tracing::error!(?r, "inference loop ended")
             }
             r = ws_recv_handle => {
                 tracing::error!(?r, "ws recv loop ended")

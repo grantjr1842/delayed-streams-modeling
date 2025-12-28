@@ -21,10 +21,15 @@ impl MaybeQuantizedWeight {
     }
 }
 
-pub fn matmul_dtype(_device: &candle::Device) -> DType {
-    // Dtype used for intermediate matmul in attention during quantized execution
-    // Force F32 for now as RTX 2070 (Turing) doesn't support BF16 and causes missing symbol errors.
-    DType::F32
+pub fn matmul_dtype(device: &candle::Device) -> DType {
+    // Dtype used for intermediate matmul in attention during quantized execution.
+    // F16 is used on CUDA for better performance (supported on Turing+).
+    // BF16 would be preferred on Ampere+ but isn't supported on Turing.
+    if device.is_cuda() {
+        DType::F16
+    } else {
+        DType::F32
+    }
 }
 
 #[derive(Clone)]

@@ -5,7 +5,7 @@
 use crate::AsrStreamingQuery as Query;
 use anyhow::{Context, Result};
 use axum::extract::ws;
-use candle::{DType, Device, Tensor};
+use candle::{DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use std::collections::VecDeque;
 use tokio::time::{timeout, Duration};
@@ -231,7 +231,7 @@ impl Asr {
             Ok::<(), anyhow::Error>(())
         });
 
-        let (mimi_tx, mimi_rx) = std::sync::mpsc::sync_channel::<Tensor>(100);
+        let (mimi_tx, mimi_rx) = std::sync::mpsc::sync_channel::<Vec<Vec<u32>>>(100);
         let mimi_dev = state.device().clone();
         let mimi_batch_size = state.batch_size();
         let mut mimi_tokenizer = state.audio_tokenizer.clone();
@@ -245,41 +245,49 @@ impl Asr {
                 ))?;
                 let audio_tokens = mimi_tokenizer.encode_step(&pcm.into(), &().into())?;
                 if let Some(audio_tokens) = audio_tokens.as_option() {
-                    mimi_tx.send(audio_tokens.clone())?;
+                    let (_one, _codebooks, steps) = audio_tokens.dims3()?;
+                    let mut all_steps = Vec::with_capacity(steps);
+                    for step in 0..steps {
+                        let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
+                        all_steps.push(codes);
+                    }
+                    mimi_tx.send(all_steps)?;
                 }
             }
             Ok::<(), anyhow::Error>(())
         });
 
         let inference_handle = crate::utils::spawn_blocking("inference_loop", move || {
-            for audio_tokens in mimi_rx {
-                let asr_msgs = state.step_tokens(
-                    &audio_tokens,
-                    conditions.as_ref(),
-                    &().into(),
-                    |_, text_tokens, audio_tokens| {
-                        if let Err(err) =
-                            log_tx_inference.send((text_tokens.clone(), audio_tokens.to_vec()))
-                        {
-                            tracing::error!(?err, "failed to send log");
-                        }
-                    },
-                )?;
-                for asr_msg in asr_msgs {
-                    let msg = match asr_msg {
-                        moshi::asr::AsrMsg::Word { tokens, start_time, .. } => OutMsg::Word {
-                            text: text_tokenizer.decode_piece_ids(&tokens)?,
-                            start_time,
+            for steps_tokens in mimi_rx {
+                for codes in steps_tokens {
+                    let asr_msgs = state.step_tokens_vec(
+                        codes,
+                        conditions.as_ref(),
+                        &().into(),
+                        |_, text_tokens, audio_tokens| {
+                            if let Err(err) =
+                                log_tx_inference.send((text_tokens.clone(), audio_tokens.to_vec()))
+                            {
+                                tracing::error!(?err, "failed to send log");
+                            }
                         },
-                        moshi::asr::AsrMsg::Step { step_idx, prs } => {
-                            let prs = prs.iter().map(|p| p[0]).collect::<Vec<_>>();
-                            OutMsg::Step { step_idx, prs, buffered_pcm: 0 }
-                        }
-                        moshi::asr::AsrMsg::EndWord { stop_time, .. } => {
-                            OutMsg::EndWord { stop_time }
-                        }
-                    };
-                    tx.send(msg)?
+                    )?;
+                    for asr_msg in asr_msgs {
+                        let msg = match asr_msg {
+                            moshi::asr::AsrMsg::Word { tokens, start_time, .. } => OutMsg::Word {
+                                text: text_tokenizer.decode_piece_ids(&tokens)?,
+                                start_time,
+                            },
+                            moshi::asr::AsrMsg::Step { step_idx, prs } => {
+                                let prs = prs.iter().map(|p| p[0]).collect::<Vec<_>>();
+                                OutMsg::Step { step_idx, prs, buffered_pcm: 0 }
+                            }
+                            moshi::asr::AsrMsg::EndWord { stop_time, .. } => {
+                                OutMsg::EndWord { stop_time }
+                            }
+                        };
+                        tx.send(msg)?
+                    }
                 }
             }
             Ok::<(), anyhow::Error>(())

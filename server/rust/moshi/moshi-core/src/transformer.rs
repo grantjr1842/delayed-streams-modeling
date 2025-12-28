@@ -880,35 +880,50 @@ impl StreamingTransformer {
         // Note that the mask still discards the values that are before context as this can happen
         // when t > context.
         let mask = {
-            // mask shape should be b, h, t, k
-            // self.layers[0].self_attn.kv_cache.attn_mask(t, xs.device())?;
-            // let mask = mask.broadcast_left((b, self.num_heads))?;
             let ks = self.layers[0].self_attn.kv_cache.positions(t);
             let min_ks = ks.iter().min().context("no positions, is t == 0?")?;
             if t == 1 && self.last_reset_pos.iter().all(|v| v <= min_ks) {
-                // No need for a mask here.
                 None
             } else {
-                let mut mask = Vec::with_capacity(b * self.num_heads * t * ks.len());
-                for &last_reset_pos in self.last_reset_pos.iter() {
-                    for t_pos in 0..t {
-                        let t_pos = t_pos + current_seq_len;
-                        for &k_pos in ks.iter() {
-                            let m = if last_reset_pos <= k_pos
-                                && k_pos <= t_pos
-                                && t_pos <= k_pos + self.context
-                            {
-                                0f32
-                            } else {
-                                f32::NEG_INFINITY
-                            };
-                            mask.push(m);
-                        }
-                    }
-                }
-                let mask = Tensor::from_vec(mask, (b, 1, t, ks.len()), xs.device())?
-                    .to_dtype(xs.dtype())?
-                    .expand((b, self.num_heads, t, ks.len()))?;
+                let dev = xs.device();
+                let last_reset_pos = Tensor::from_vec(
+                    self.last_reset_pos.iter().map(|&v| v as u32).collect::<Vec<_>>(),
+                    (b, 1, 1),
+                    dev,
+                )?
+                .to_dtype(DType::F32)?;
+                let t_pos =
+                    Tensor::arange(current_seq_len as u32, (current_seq_len + t) as u32, dev)?
+                        .reshape((1, t, 1))?
+                        .to_dtype(DType::F32)?;
+                let k_pos = Tensor::from_vec(
+                    ks.iter().map(|&v| v as u32).collect::<Vec<_>>(),
+                    (1, 1, ks.len()),
+                    dev,
+                )?
+                .to_dtype(DType::F32)?;
+
+                // last_reset_pos <= k_pos
+                let cond1 = k_pos.broadcast_ge(&last_reset_pos)?;
+                // k_pos <= t_pos
+                let cond2 = k_pos.broadcast_le(&t_pos)?;
+                // t_pos <= k_pos + self.context
+                let cond3 = t_pos
+                    .broadcast_le(&k_pos.broadcast_add(&Tensor::new(self.context as f32, dev)?)?)?;
+
+                let mask_bool = cond1.broadcast_as((b, t, ks.len()))?;
+                let mask_bool = mask_bool.where_cond(&cond2, &mask_bool.zeros_like()?)?;
+                let mask_bool = mask_bool.where_cond(&cond3, &mask_bool.zeros_like()?)?;
+
+                let neg_inf =
+                    Tensor::new(f32::NEG_INFINITY, dev)?.broadcast_as((b, t, ks.len()))?;
+                let zero = Tensor::zeros((b, t, ks.len()), DType::F32, dev)?;
+
+                let mask = mask_bool
+                    .where_cond(&zero, &neg_inf)?
+                    .unsqueeze(1)?
+                    .expand((b, self.num_heads, t, ks.len()))?
+                    .to_dtype(xs.dtype())?;
                 Some(mask)
             }
         };

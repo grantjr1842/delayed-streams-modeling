@@ -262,4 +262,21 @@ impl State {
         self.audio_tokenizer.reset_batch_idx(batch_idx, self.batch_size())?;
         Ok(())
     }
+
+    pub fn step_tokens_vec<F>(
+        &mut self,
+        audio_tokens: Vec<u32>,
+        conditions: Option<&crate::conditioner::Condition>,
+        mask: &crate::StreamMask,
+        f: F,
+    ) -> Result<Vec<AsrMsg>>
+    where
+        F: Fn(&[ItemState], &Tensor, &[Tensor]),
+    {
+        let batch_size = self.batch_size();
+        let codebooks = self.lm.in_audio_codebooks();
+        let audio_tokens =
+            Tensor::from_vec(audio_tokens, (batch_size, codebooks, 1), self.device())?;
+        self.step_tokens(&audio_tokens, conditions, mask, f)
+    }
 }

@@ -140,46 +140,48 @@ impl State {
     }
 
     fn apply_repetition_penalty(&self, logits: Tensor) -> candle::Result<Tensor> {
-        let logits = match self.repetition_penalty {
-            None => logits,
-            Some((_, 1.)) => logits,
-            Some((context_size, penalty)) => {
-                let device = logits.device();
-                let mut logits = logits.to_dtype(candle::DType::F32)?.to_vec1::<f32>()?;
-                let mut already_seen = std::collections::HashSet::new();
-                let mut non_pad_tokens = 0;
-                for &token_id in self.text_tokens(false).iter().rev() {
-                    if token_id == self.config.text_pad_token
-                        || token_id == self.config.text_eop_token
-                        || token_id == self.config.text_start_token
-                    {
-                        continue;
-                    }
-                    // Look at the last [context_size] tokens at most, count all tokens there even
-                    // if we already saw them.
-                    if non_pad_tokens >= context_size {
-                        break;
-                    }
-                    non_pad_tokens += 1;
-
-                    if already_seen.contains(&token_id) {
-                        continue;
-                    }
-
-                    already_seen.insert(token_id);
-                    if let Some(logit) = logits.get_mut(token_id as usize) {
-                        if *logit >= 0. {
-                            *logit /= penalty
-                        } else {
-                            *logit *= penalty
-                        }
-                    }
-                }
-                let logits_len = logits.len();
-                Tensor::from_vec(logits, logits_len, device)?
-            }
+        let (context_size, penalty) = match self.repetition_penalty {
+            None => return Ok(logits),
+            Some((_, p)) if p == 1.0 => return Ok(logits),
+            Some(cp) => cp,
         };
-        Ok(logits)
+
+        let device = logits.device();
+        let mut already_seen = std::collections::HashSet::new();
+        let mut non_pad_tokens = 0;
+        let mut to_penalize = Vec::new();
+        for &token_id in self.text_tokens(false).iter().rev() {
+            if token_id == self.config.text_pad_token
+                || token_id == self.config.text_eop_token
+                || token_id == self.config.text_start_token
+            {
+                continue;
+            }
+            if non_pad_tokens >= context_size {
+                break;
+            }
+            non_pad_tokens += 1;
+
+            if already_seen.insert(token_id) {
+                to_penalize.push(token_id as u32);
+            }
+        }
+
+        if to_penalize.is_empty() {
+            return Ok(logits);
+        }
+
+        let to_penalize_len = to_penalize.len();
+        let to_penalize = Tensor::from_vec(to_penalize, to_penalize_len, device)?;
+        let penalized_logits = logits.index_select(&to_penalize, 0)?;
+        let is_pos = penalized_logits.ge(0f32)?;
+        let p = is_pos.where_cond(
+            &Tensor::new(1.0 / penalty as f32, device)?.broadcast_as(penalized_logits.shape())?,
+            &Tensor::new(penalty as f32, device)?.broadcast_as(penalized_logits.shape())?,
+        )?;
+        let penalized_logits = penalized_logits.broadcast_mul(&p)?;
+        let diff = (penalized_logits - logits.index_select(&to_penalize, 0)?)?;
+        logits.scatter_add(&to_penalize, &diff, 0)
     }
 
     // The acoustic tokens are written with a delay, so this can create "gaps" of UNGENERATED

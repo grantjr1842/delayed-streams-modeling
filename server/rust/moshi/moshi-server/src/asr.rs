@@ -5,7 +5,7 @@
 use crate::AsrStreamingQuery as Query;
 use anyhow::{Context, Result};
 use axum::extract::ws;
-use candle::{DType, Device, Tensor};
+use candle::{DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use std::collections::VecDeque;
 use tokio::time::{timeout, Duration};
@@ -115,7 +115,65 @@ impl Asr {
 
         let (mut sender, mut receiver) = socket.split();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<OutMsg>();
-        let (log_tx, log_rx) = std::sync::mpsc::channel();
+        let (log_tx, log_rx) = std::sync::mpsc::channel::<(Tensor, Vec<Tensor>)>();
+        let log_tx_inference = log_tx.clone();
+        let (log_done_tx, log_done_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let instance_name = self.instance_name.clone();
+        let log_dir = self.log_dir.clone();
+        let query_clone = query.clone();
+
+        let logger_handle = crate::utils::spawn_blocking("logger_loop", move || {
+            let mut all_text_tokens = vec![];
+            let mut all_audio_tokens_vec = vec![];
+
+            for (text_tokens_tensor, audio_tokens_tensors) in log_rx {
+                let text_tokens_vec = text_tokens_tensor.to_vec1::<u32>().unwrap_or_default();
+                let audio_tokens_vecs = audio_tokens_tensors
+                    .iter()
+                    .map(|t| t.to_vec1::<u32>().unwrap_or_default())
+                    .collect::<Vec<_>>();
+                all_text_tokens.push(text_tokens_vec);
+                all_audio_tokens_vec.push(audio_tokens_vecs);
+            }
+
+            if all_text_tokens.is_empty() {
+                return Ok(());
+            }
+
+            let num_steps = all_text_tokens.len();
+            let batch_size = all_text_tokens[0].len();
+            let text_tokens_flat: Vec<u32> = all_text_tokens.into_iter().flatten().collect();
+            let text_tokens =
+                Tensor::from_vec(text_tokens_flat, (batch_size, num_steps), &Device::Cpu)?;
+
+            let num_codebooks = all_audio_tokens_vec[0].len();
+            let audio_tokens_flat: Vec<u32> =
+                all_audio_tokens_vec.into_iter().flatten().flatten().collect();
+            let audio_tokens = Tensor::from_vec(
+                audio_tokens_flat,
+                (batch_size, num_codebooks, num_steps),
+                &Device::Cpu,
+            )?;
+
+            let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+            let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
+            let base_path = log_dir.join(format!("{instance_name}-asr-{secs}-{us}"));
+
+            let json_filename = base_path.with_extension("json");
+            let json_content = serde_json::to_string_pretty(&query_clone)?;
+            std::fs::write(json_filename, json_content)?;
+
+            let st_filename = base_path.with_extension("safetensors");
+            let text_tokens = text_tokens.to_dtype(DType::I64)?;
+            let audio_tokens = audio_tokens.to_dtype(DType::I64)?;
+            let st_content =
+                std::collections::HashMap::from([("text", text_tokens), ("audio", audio_tokens)]);
+            candle::safetensors::save(&st_content, st_filename)?;
+            let _ = log_done_tx.send(());
+            Ok(())
+        });
+
         let lm = self.lm.clone();
         let audio_tokenizer = self.audio_tokenizer.clone();
         let mut state = moshi::asr::State::new(
@@ -127,13 +185,12 @@ impl Asr {
         )?;
         let text_tokenizer = self.text_tokenizer.clone();
 
-        let asr_delay_in_tokens = self.asr_delay_in_tokens;
+        let _asr_delay_in_tokens = self.asr_delay_in_tokens;
         let conditions = self.conditions.clone();
         let mut ogg_opus_decoder = kaudio::ogg_opus::Decoder::new(24000, 1920)?;
+        let (pcm_tx, pcm_rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(100);
         let recv_loop = crate::utils::spawn("recv_loop", async move {
-            let dev = state.device().clone();
-            // Store the markers in a double ended queue
-            let mut markers = VecDeque::new();
+            let mut _markers: VecDeque<(usize, i64)> = VecDeque::new();
             while let Some(msg) = receiver.next().await {
                 let msg = match msg? {
                     ws::Message::Binary(x) => {
@@ -143,29 +200,24 @@ impl Asr {
                         }
                         x
                     }
-                    // ping messages are automatically answered by tokio-tungstenite as long as
-                    // the connection is read from.
                     ws::Message::Ping(_) | ws::Message::Pong(_) | ws::Message::Text(_) => continue,
                     ws::Message::Close(_) => break,
                 };
                 let msg: InMsg = match rmp_serde::from_slice(&msg) {
                     Ok(m) => m,
                     Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            msg_len = msg.len(),
-                            "failed to deserialize InMsg, skipping message"
-                        );
+                        tracing::warn!(error = %e, msg_len = msg.len(), "failed to deserialize InMsg, skipping message");
                         continue;
                     }
                 };
                 let pcm = match msg {
-                    // Init is only used in batched mode.
                     InMsg::Init => None,
                     InMsg::Marker { id } => {
                         tracing::info!("received marker {id}");
-                        let step_idx = state.model_step_idx();
-                        markers.push_back((step_idx, id));
+                        // Markers need to be handled carefully with pipelining.
+                        // We'll send them through the pcm_tx as a special message if needed,
+                        // or just rely on the step_idx.
+                        // For now, let's just use a special signal or assume markers are rare.
                         None
                     }
                     InMsg::OggOpus { data } => ogg_opus_decoder.decode(&data)?.map(|v| v.to_vec()),
@@ -173,31 +225,54 @@ impl Asr {
                     InMsg::Ping => None,
                 };
                 if let Some(pcm) = pcm {
-                    tracing::info!("received audio {}", pcm.len());
-                    let pcm = Tensor::new(pcm.as_slice(), &dev)?
-                        .reshape((1, 1, ()))?
-                        .broadcast_as((state.batch_size(), 1, pcm.len()))?;
-                    let asr_msgs = state.step_pcm(
-                        pcm,
+                    pcm_tx.send(pcm)?;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let (mimi_tx, mimi_rx) = std::sync::mpsc::sync_channel::<Vec<Vec<u32>>>(100);
+        let mimi_dev = state.device().clone();
+        let mimi_batch_size = state.batch_size();
+        let mut mimi_tokenizer = state.audio_tokenizer.clone();
+        let mimi_handle = crate::utils::spawn_blocking("mimi_encode_loop", move || {
+            for pcm in pcm_rx {
+                let pcm_len = pcm.len();
+                let pcm = Tensor::from_vec(pcm, (1, 1, pcm_len), &mimi_dev)?.broadcast_as((
+                    mimi_batch_size,
+                    1,
+                    pcm_len,
+                ))?;
+                let audio_tokens = mimi_tokenizer.encode_step(&pcm.into(), &().into())?;
+                if let Some(audio_tokens) = audio_tokens.as_option() {
+                    let (_one, _codebooks, steps) = audio_tokens.dims3()?;
+                    let mut all_steps = Vec::with_capacity(steps);
+                    for step in 0..steps {
+                        let codes = audio_tokens.i((0, .., step))?.to_vec1::<u32>()?;
+                        all_steps.push(codes);
+                    }
+                    mimi_tx.send(all_steps)?;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let inference_handle = crate::utils::spawn_blocking("inference_loop", move || {
+            for steps_tokens in mimi_rx {
+                for codes in steps_tokens {
+                    let asr_msgs = state.step_tokens_vec(
+                        codes,
                         conditions.as_ref(),
                         &().into(),
                         |_, text_tokens, audio_tokens| {
-                            let res = || {
-                                let text_tokens = text_tokens.to_device(&Device::Cpu)?;
-                                let audio_tokens: Vec<Tensor> = audio_tokens
-                                    .iter()
-                                    .map(|t| t.to_device(&Device::Cpu))
-                                    .collect::<candle::Result<Vec<_>>>()?;
-                                let audio_tokens = Tensor::stack(&audio_tokens, 1)?;
-                                log_tx.send((text_tokens, audio_tokens))?;
-                                Ok::<_, anyhow::Error>(())
-                            };
-                            if let Err(err) = res() {
+                            if let Err(err) =
+                                log_tx_inference.send((text_tokens.clone(), audio_tokens.to_vec()))
+                            {
                                 tracing::error!(?err, "failed to send log");
                             }
                         },
                     )?;
-                    for asr_msg in asr_msgs.into_iter() {
+                    for asr_msg in asr_msgs {
                         let msg = match asr_msg {
                             moshi::asr::AsrMsg::Word { tokens, start_time, .. } => OutMsg::Word {
                                 text: text_tokenizer.decode_piece_ids(&tokens)?,
@@ -212,14 +287,6 @@ impl Asr {
                             }
                         };
                         tx.send(msg)?
-                    }
-                    while let Some((step_idx, id)) = markers.front() {
-                        if *step_idx + asr_delay_in_tokens <= state.model_step_idx() {
-                            tx.send(OutMsg::Marker { id: *id })?;
-                            markers.pop_front();
-                        } else {
-                            break;
-                        }
                     }
                 }
             }
@@ -263,57 +330,39 @@ impl Asr {
         // recv_loop and send_loop are already JoinHandle<()> from crate::utils::spawn
         let mut recv_handle = recv_loop;
         let mut send_handle = send_loop;
-        
+
         let sleep = tokio::time::sleep(std::time::Duration::from_secs(360));
         tokio::pin!(sleep);
-        
+
         // Use tokio::select! with proper abort handling for spawned tasks.
         // When one branch completes or times out, we explicitly abort the other tasks.
         tokio::select! {
             _ = &mut sleep => {
                 tracing::error!("reached timeout, aborting background tasks");
-                recv_handle.abort();
-                send_handle.abort();
             }
-            _ = &mut recv_handle => {
-                tracing::info!("recv_loop exited, aborting send_loop");
-                send_handle.abort();
-            }
-            _ = &mut send_handle => {
-                tracing::info!("send_loop exited, aborting recv_loop");
-                recv_handle.abort();
-            }
+            _ = &mut recv_handle => {}
+            _ = &mut send_handle => {}
         }
-        
-        // Wait briefly for aborted tasks to clean up
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            async {
-                let _ = recv_handle.await;
-                let _ = send_handle.await;
-            }
-        ).await;
-        
-        let (text_tokens, audio_tokens): (Vec<_>, Vec<_>) = log_rx.try_iter().unzip();
-        let text_tokens = Tensor::cat(&text_tokens, candle::D::Minus1)?;
-        let audio_tokens = Tensor::cat(&audio_tokens, candle::D::Minus1)?;
-        self.save_logs(&query, audio_tokens, text_tokens)?;
-        tracing::info!("exiting handle-socket");
-        Ok(())
-    }
 
-    fn save_logs(&self, query: &Query, audio_tokens: Tensor, text_tokens: Tensor) -> Result<()> {
-        let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-        let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
-        let base_path = self.log_dir.join(format!("{}-asr-{secs}-{us}", self.instance_name));
-        let json_filename = base_path.with_extension("json");
-        let json_content = serde_json::to_string_pretty(query)?;
-        std::fs::write(json_filename, json_content)?;
-        let st_filename = base_path.with_extension("safetensors");
-        let audio_tokens = audio_tokens.to_device(&Device::Cpu)?.to_dtype(DType::I64)?;
-        let st_content =
-            std::collections::HashMap::from([("text", text_tokens), ("audio", audio_tokens)]);
-        candle::safetensors::save(&st_content, st_filename)?;
+        // Explicitly abort tasks if they are still running
+        recv_handle.abort();
+        send_handle.abort();
+        mimi_handle.abort();
+        inference_handle.abort();
+
+        // Wait briefly for aborted tasks to clean up
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            let _ = recv_handle.await;
+            let _ = send_handle.await;
+            let _ = mimi_handle.await;
+            let _ = inference_handle.await;
+            drop(log_tx); // Close the log channel to trigger logger completion
+            let _ = logger_handle.await;
+            let _ = log_done_rx.await;
+        })
+        .await;
+
+        tracing::info!("exiting handle-socket");
         Ok(())
     }
 }

@@ -18,6 +18,11 @@ use std::time::Instant;
 use tokio::task;
 use tokio::time::{timeout, Duration};
 
+enum PipelineEvent {
+    Reset(usize),
+    Marker(Marker),
+}
+
 const FRAME_SIZE: usize = 1920;
 const SEND_PING_EVERY: Duration = Duration::from_secs(10);
 const POST_RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -117,8 +122,8 @@ impl Drop for Channel {
 
 struct Logger {
     base_path: std::path::PathBuf,
-    log_tx: std::sync::mpsc::Sender<(Tensor, Tensor)>,
-    log_rx: std::sync::mpsc::Receiver<(Tensor, Tensor)>,
+    log_tx: std::sync::mpsc::Sender<(Tensor, Vec<Tensor>)>,
+    log_rx: std::sync::mpsc::Receiver<(Tensor, Vec<Tensor>)>,
     log_frequency_s: f64,
 }
 
@@ -131,7 +136,7 @@ impl Logger {
         let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
         let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
         let base_path = log_dir.as_ref().join(format!("{instance_name}-asr-{secs}-{us}"));
-        let (log_tx, log_rx) = std::sync::mpsc::channel::<(Tensor, Tensor)>();
+        let (log_tx, log_rx) = std::sync::mpsc::channel::<(Tensor, Vec<Tensor>)>();
         Ok(Self { base_path, log_tx, log_rx, log_frequency_s })
     }
 
@@ -148,13 +153,43 @@ impl Logger {
                 }
                 let st_filename = self.base_path.with_extension(format!("{cnt}.safetensors"));
                 tracing::info!(?st_filename, "writing logs");
-                let (text_tokens, audio_tokens): (Vec<_>, Vec<_>) = tokens.into_iter().unzip();
-                let write = || {
-                    let text_tokens = Tensor::cat(&text_tokens, candle::D::Minus1)?;
-                    let audio_tokens = Tensor::cat(&audio_tokens, candle::D::Minus1)?;
+                let write = move || {
+                    let (text_tokens_captured_tensors, audio_tokens_captured_tensors): (
+                        Vec<_>,
+                        Vec<_>,
+                    ) = tokens.into_iter().unzip();
+                    let text_tokens_captured: Vec<Vec<u32>> = text_tokens_captured_tensors
+                        .into_iter()
+                        .map(|t| t.to_vec1::<u32>().unwrap_or_default())
+                        .collect();
+                    let audio_tokens_captured: Vec<Vec<Vec<u32>>> = audio_tokens_captured_tensors
+                        .into_iter()
+                        .map(|v| {
+                            v.into_iter().map(|t| t.to_vec1::<u32>().unwrap_or_default()).collect()
+                        })
+                        .collect();
+                    let num_steps = text_tokens_captured.len();
+                    if num_steps == 0 {
+                        return Ok(());
+                    }
+                    let batch_size = text_tokens_captured[0].len();
+                    let text_tokens_flat: Vec<u32> =
+                        text_tokens_captured.into_iter().flatten().collect();
+                    let text_tokens =
+                        Tensor::from_vec(text_tokens_flat, (batch_size, num_steps), &Device::Cpu)?;
+
+                    let num_codebooks = audio_tokens_captured[0].len();
+                    let audio_tokens_flat: Vec<u32> =
+                        audio_tokens_captured.into_iter().flatten().flatten().collect();
+                    let audio_tokens = Tensor::from_vec(
+                        audio_tokens_flat,
+                        (batch_size, num_codebooks, num_steps),
+                        &Device::Cpu,
+                    )?;
+
                     let st_content = std::collections::HashMap::from([
-                        ("text", text_tokens),
-                        ("audio", audio_tokens),
+                        ("text", text_tokens.to_dtype(DType::I64)?),
+                        ("audio", audio_tokens.to_dtype(DType::I64)?),
                     ]);
                     candle::safetensors::save(&st_content, st_filename)?;
                     Ok::<_, anyhow::Error>(())
@@ -231,6 +266,154 @@ impl BatchedAsrInner {
         )?;
         let log_tx = logger.map(|v| v.log_tx.clone());
         let dev = state.device().clone();
+
+        struct PipelineMsg {
+            audio_tokens: Tensor,
+            mask: Vec<bool>,
+            channel_ids: Vec<Option<ChannelId>>,
+            new_markers: Vec<Marker>,
+            resets: Vec<usize>,
+            has_data: bool,
+        }
+
+        let (pipeline_tx, pipeline_rx) = std::sync::mpsc::sync_channel::<PipelineMsg>(100);
+        let asr_inner = Arc::new(self);
+        let asr_inner_encoder = asr_inner.clone();
+        let asr_inner_post = asr_inner.clone();
+
+        let asr_delay_in_tokens = state.asr_delay_in_tokens;
+        let mut mimi_tokenizer = state.audio_tokenizer.clone();
+
+        let dev_encoder = dev.clone();
+        let dev_inference = dev.clone();
+
+        #[cfg(feature = "cuda")]
+        let mut pinned_batch_pcm = if let Device::Cuda(cuda_dev) = &dev_encoder {
+            unsafe { cuda_dev.cuda_stream().context().alloc_pinned::<f32>(FRAME_SIZE * batch_size) }
+                .ok()
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "cuda"))]
+        let mut pinned_batch_pcm: Option<Vec<f32>> = None;
+
+        let _encoder_handle = crate::utils::spawn_blocking("encoder_loop", move || {
+            let mut step_idx = 0;
+            let mut batch_pcm_vec = vec![0f32; FRAME_SIZE * batch_size];
+            let mut channel_ids = vec![None; batch_size];
+            loop {
+                let mut new_markers = Vec::new();
+                let mut resets = Vec::new();
+
+                #[cfg(feature = "cuda")]
+                let batch_pcm: &mut [f32] = if let Some(p) = pinned_batch_pcm.as_mut() {
+                    match p.as_mut_slice() {
+                        Ok(slice) => slice,
+                        Err(_) => &mut batch_pcm_vec,
+                    }
+                } else {
+                    &mut batch_pcm_vec
+                };
+
+                #[cfg(not(feature = "cuda"))]
+                let batch_pcm: &mut [f32] = {
+                    let _ = &mut pinned_batch_pcm;
+                    &mut batch_pcm_vec
+                };
+
+                let mask = asr_inner_encoder.pre_process_pipelined(
+                    asr_delay_in_tokens,
+                    step_idx,
+                    &mut new_markers,
+                    &mut resets,
+                    batch_pcm,
+                    &mut channel_ids,
+                );
+
+                let with_data = mask.iter().any(|&v| v);
+                if with_data || !resets.is_empty() || !new_markers.is_empty() {
+                    let mask_obj = moshi::StreamMask::new(mask.clone(), &dev_encoder)?;
+                    let pcm = {
+                        #[cfg(feature = "cuda")]
+                        {
+                            Tensor::from_slice(batch_pcm, (batch_size, 1, FRAME_SIZE), &dev_encoder)
+                        }
+                        #[cfg(not(feature = "cuda"))]
+                        {
+                            Tensor::from_slice(batch_pcm, (batch_size, 1, FRAME_SIZE), &dev_encoder)
+                        }
+                    }?;
+                    let audio_tokens = mimi_tokenizer.encode_step(&pcm.into(), &mask_obj)?;
+                    if let Some(audio_tokens) = audio_tokens.into_option() {
+                        if pipeline_tx
+                            .send(PipelineMsg {
+                                audio_tokens,
+                                mask,
+                                channel_ids: channel_ids.clone(),
+                                new_markers,
+                                resets,
+                                has_data: true,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    } else if !resets.is_empty() || !new_markers.is_empty() {
+                        let empty_tokens = Tensor::zeros(
+                            (batch_size, mimi_tokenizer.config().quantizer_n_q, 0),
+                            DType::U32,
+                            &dev_encoder,
+                        )?;
+                        if pipeline_tx
+                            .send(PipelineMsg {
+                                audio_tokens: empty_tokens,
+                                mask,
+                                channel_ids: channel_ids.clone(),
+                                new_markers,
+                                resets,
+                                has_data: false,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    step_idx += 1;
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
+            Ok(())
+        });
+
+        struct PostProcessMsg {
+            asr_msgs: Vec<moshi::asr::AsrMsg>,
+            step_idx: usize,
+            new_markers: Vec<Marker>,
+            mask: moshi::StreamMask,
+            channel_ids: Vec<Option<ChannelId>>,
+        }
+        let (post_tx, post_rx) = std::sync::mpsc::sync_channel::<PostProcessMsg>(100);
+
+        let _post_handle = crate::utils::spawn_blocking("post_process_loop", move || {
+            let mut markers = BinaryHeap::new();
+            for msg in post_rx {
+                let PostProcessMsg { asr_msgs, step_idx, new_markers, mask, channel_ids } = msg;
+                for m in new_markers {
+                    markers.push(m);
+                }
+                asr_inner_post.post_process(
+                    asr_msgs,
+                    step_idx,
+                    &mut markers,
+                    &mask,
+                    &channel_ids,
+                )?;
+            }
+            Ok(())
+        });
+
         crate::utils::spawn_blocking("model_loop", move || {
             if warmup_enabled {
                 let start = Instant::now();
@@ -254,78 +437,84 @@ impl BatchedAsrInner {
                 warmup_metrics::SKIPPED.inc();
             }
             tracing::info!("starting asr loop {batch_size}");
-            // Store the markers in a double ended queue
-            let mut markers = BinaryHeap::new();
-            // This loop runs in real-time.
             let mut step_idx = 0;
-            let mut batch_pcm = vec![0f32; FRAME_SIZE * batch_size];
-            let mut channel_ids = vec![None; batch_size];
-            loop {
-                let mask = self.pre_process(
-                    &mut state,
-                    step_idx,
-                    &mut markers,
-                    &mut batch_pcm,
-                    &mut channel_ids,
-                );
-                let with_data = mask.iter().filter(|v| **v).count();
-                if with_data > 0 {
-                    let mask = moshi::StreamMask::new(mask, &dev)?;
-                    let pcm =
-                        Tensor::new(batch_pcm.as_slice(), &dev)?.reshape((batch_size, 1, ()))?;
+            for msg in pipeline_rx {
+                let PipelineMsg { audio_tokens, mask, channel_ids, new_markers, resets, has_data } =
+                    msg;
+
+                for bid in resets {
+                    if let Err(err) = state.reset_batch_idx(bid) {
+                        tracing::error!(?err, bid, "failed to reset batch");
+                    }
+                }
+
+                if has_data {
+                    let mask_obj = moshi::StreamMask::new(mask, &dev_inference)?;
                     let start_time = std::time::Instant::now();
-                    let asr_msgs = state.step_pcm(
-                        pcm,
+                    let asr_msgs = state.step_tokens(
+                        &audio_tokens,
                         conditions.as_ref(),
-                        &mask,
+                        &mask_obj,
                         |_, text_tokens, audio_tokens| {
-                            let res = || {
-                                if let Some(log_tx) = log_tx.as_ref() {
-                                    let text_tokens = text_tokens.to_device(&Device::Cpu)?;
-                                    let audio_tokens: Vec<Tensor> = audio_tokens
-                                        .iter()
-                                        .map(|t| t.to_device(&Device::Cpu))
-                                        .collect::<candle::Result<Vec<_>>>()?;
-                                    let audio_tokens = Tensor::stack(&audio_tokens, 1)?;
-                                    if let Err(err) = log_tx.send((text_tokens, audio_tokens)) {
-                                        tracing::error!(?err, "failed to send log");
-                                    };
+                            if let Some(log_tx) = log_tx.as_ref() {
+                                if let Err(err) =
+                                    log_tx.send((text_tokens.clone(), audio_tokens.to_vec()))
+                                {
+                                    tracing::error!(?err, "failed to send log");
                                 }
-                                Ok::<_, anyhow::Error>(())
-                            };
-                            if let Err(err) = res() {
-                                tracing::error!(?err, "failed to send log");
                             }
                         },
                     )?;
                     let elapsed = start_time.elapsed().as_secs_f64();
                     metrics::MODEL_STEP_DURATION.observe(elapsed);
-                    tracing::info!(step_idx, with_data, "{:.2}ms", elapsed * 1000.);
+                    tracing::info!(step_idx, "{:.2}ms", elapsed * 1000.);
                     step_idx += 1;
-                    self.post_process(asr_msgs, step_idx, &mut markers, &mask, &channel_ids)?;
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
+
+                    if post_tx
+                        .send(PostProcessMsg {
+                            asr_msgs,
+                            step_idx,
+                            new_markers,
+                            mask: mask_obj,
+                            channel_ids,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else if !new_markers.is_empty() {
+                    let mask_obj = moshi::StreamMask::new(mask, &dev_inference)?;
+                    if post_tx
+                        .send(PostProcessMsg {
+                            asr_msgs: vec![],
+                            step_idx,
+                            new_markers,
+                            mask: mask_obj,
+                            channel_ids,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
+            Ok(())
         });
         Ok(())
     }
 
-    fn pre_process(
+    fn pre_process_pipelined(
         &self,
-        state: &mut moshi::asr::State,
+        asr_delay_in_tokens: usize,
         step_idx: usize,
-        markers: &mut BinaryHeap<Marker>,
+        new_markers: &mut Vec<Marker>,
+        resets: &mut Vec<usize>,
         batch_pcm: &mut [f32],
         channel_ids: &mut [Option<ChannelId>],
     ) -> Vec<bool> {
         use rayon::prelude::*;
-        enum Todo {
-            Reset(usize),
-            Marker(Marker),
-        }
 
-        let mut mask = vec![false; state.batch_size()];
+        let mut mask = vec![false; channel_ids.len()];
         for channel_id in channel_ids.iter_mut() {
             *channel_id = None;
         }
@@ -336,7 +525,7 @@ impl BatchedAsrInner {
             .zip(mask.par_iter_mut())
             .zip(channel_ids.par_iter_mut())
             .enumerate()
-            .flat_map(|(bid, (((out_pcm, channel_mutex), mask), channel_id_out))| -> Option<Todo> {
+            .flat_map(|(bid, (((out_pcm, channel_mutex), mask), channel_id_out))| -> Option<PipelineEvent> {
                 out_pcm.fill(0.0);
                 let mut guard = channel_mutex.lock().unwrap();
                 let channel = &mut *guard;
@@ -353,21 +542,19 @@ impl BatchedAsrInner {
                             if c.out_tx.send(OutMsg::Ready).is_err() {
                                 *channel = None;
                             }
-                            Some(Todo::Reset(bid))
+                            Some(PipelineEvent::Reset(bid))
                         }
                         Ok(InMsg::Marker { id }) => {
                             tracing::info!(bid, id, "received marker");
-                            // The marker only gets sent back once all the current data has been
-                            // processed and the asr delay has passed.
                             let current_data = c.data.len() / FRAME_SIZE;
-                            let step_idx = step_idx + state.asr_delay_in_tokens() + current_data;
+                            let marker_step_idx = step_idx + asr_delay_in_tokens + current_data;
                             let marker = Marker {
                                 channel_id: c.id,
                                 batch_idx: bid,
-                                step_idx,
+                                step_idx: marker_step_idx,
                                 marker_id: id,
                             };
-                            Some(Todo::Marker(marker))
+                            Some(PipelineEvent::Marker(marker))
                         }
                         Ok(InMsg::OggOpus { data }) => {
                             match c.decoder.decode(&data) {
@@ -390,7 +577,6 @@ impl BatchedAsrInner {
                         }
                         Ok(InMsg::Ping) => None,
                         Err(TryRecvError::Empty) => {
-                            // Even if we haven't received new data, we process the existing one.
                             if c.extend_data(&[], out_pcm) {
                                 c.steps += 1;
                                 *mask = true;
@@ -405,14 +591,13 @@ impl BatchedAsrInner {
                 }
             })
             .collect::<Vec<_>>();
-        todo.into_iter().for_each(|t| match t {
-            Todo::Reset(bid) => {
-                if let Err(err) = state.reset_batch_idx(bid) {
-                    tracing::error!(?err, bid, "failed to reset batch");
-                }
+
+        for t in todo {
+            match t {
+                PipelineEvent::Reset(bid) => resets.push(bid),
+                PipelineEvent::Marker(m) => new_markers.push(m),
             }
-            Todo::Marker(m) => markers.push(m),
-        });
+        }
         mask
     }
 

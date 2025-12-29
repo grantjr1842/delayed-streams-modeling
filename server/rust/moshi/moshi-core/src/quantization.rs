@@ -112,11 +112,8 @@ impl EuclideanCodebook {
         target_shape.pop();
         let xs = xs.flatten_to(D::Minus2)?;
         let _ = xs.dims2()?;
-        // TODO: avoid repeating this.
-        let cluster_usage = self.cluster_usage.maximum(self.epsilon)?.unsqueeze(1)?;
-        let embedding = self.embedding_sum.broadcast_div(&cluster_usage)?;
         // Manual cdist implementation.
-        let diff = xs.unsqueeze(1)?.broadcast_sub(&embedding.unsqueeze(0)?)?;
+        let diff = xs.unsqueeze(1)?.broadcast_sub(&self.embedding.unsqueeze(0)?)?;
         let dists = diff.sqr()?.sum(D::Minus1)?;
         let codes = dists.argmin(D::Minus1)?;
         codes.reshape(target_shape)

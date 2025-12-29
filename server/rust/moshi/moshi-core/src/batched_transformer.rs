@@ -90,7 +90,7 @@ impl StreamingMultiheadAttention {
             k = rope.apply_rotary_emb(&k)?;
         }
 
-        let (k, v) = { self.kv_cache.append(&k.contiguous()?, &v.contiguous()?, iam)? };
+        let (k, v) = { self.kv_cache.append(&k, &v, iam)? };
         // The KV cache keeps all the data at the moment, we want to trim
         // down the part that comes from the cache to at most context to
         // be coherent with the mask shape we provide.
@@ -444,7 +444,7 @@ impl StreamingTransformer {
                 let pos = self
                     .positions()
                     .iter()
-                    .map(|&v| (0..t).map(|i| (v + i) as u32).collect::<Vec<_>>())
+                    .map(|&v| (0..t).map(|j| (v + j) as u32).collect::<Vec<_>>())
                     .collect::<Vec<_>>();
                 let pos = Tensor::new(pos, xs.device())?;
                 Some(rope.rope(&pos)?)

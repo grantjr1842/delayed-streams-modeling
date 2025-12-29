@@ -76,7 +76,7 @@ pub enum Encoder {
 
 enum LogMessage {
     Text(String),
-    Slice(u32, Tensor),
+    Slice(u32, Vec<u32>),
 }
 
 #[derive(serde::Serialize)]
@@ -104,7 +104,7 @@ impl LogSender {
         self.send(LogMessage::Text(text));
     }
 
-    fn send_slice(&self, idx: u32, slice: Tensor) {
+    fn send_slice(&self, idx: u32, slice: Vec<u32>) {
         self.send(LogMessage::Slice(idx, slice));
     }
 }
@@ -119,7 +119,7 @@ impl Logger {
         // Use log_rx.iter() to wait on the process loop being done.
 
         let mut text_tokens = vec![];
-        let mut audio_tokens = vec![];
+        let mut audio_tokens_vec = vec![];
         let mut texts = vec![];
         for elem in self.0.into_iter() {
             match elem {
@@ -127,13 +127,21 @@ impl Logger {
                     texts.push(text);
                 }
                 LogMessage::Slice(idx, slice) => {
-                    audio_tokens.push(slice);
+                    audio_tokens_vec.push(slice);
                     text_tokens.push(idx);
                 }
             }
         }
+        if audio_tokens_vec.is_empty() {
+            return Ok(());
+        }
         let text_tokens = text_tokens.into_iter().map(|v| (v, Speaker::Main)).collect::<Vec<_>>();
-        let audio_tokens = Tensor::cat(&audio_tokens, candle::D::Minus1)?;
+        let num_steps = audio_tokens_vec.len();
+        let num_codebooks = audio_tokens_vec[0].len();
+        let audio_tokens_flat: Vec<u32> = audio_tokens_vec.into_iter().flatten().collect();
+        let audio_tokens =
+            Tensor::from_vec(audio_tokens_flat, (1, num_codebooks, num_steps), &Device::Cpu)?;
+
         let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
         let (secs, us) = (since_epoch.as_secs(), since_epoch.subsec_micros());
         let base_path = log_dir.as_ref().join(format!("{instance_name}-tts-{secs}-{us}"));
@@ -146,7 +154,7 @@ impl Logger {
         let text_len = text_tokens.len();
         let text_tokens = candle::Tensor::from_vec(text_tokens, text_len, &candle::Device::Cpu)?
             .to_dtype(DType::I64)?;
-        let audio_tokens = audio_tokens.to_device(&Device::Cpu)?.to_dtype(DType::I64)?;
+        let audio_tokens = audio_tokens.to_dtype(DType::I64)?;
         let st_content =
             std::collections::HashMap::from([("text", text_tokens), ("audio", audio_tokens)]);
         candle::safetensors::save(&st_content, st_filename)?;
@@ -367,7 +375,25 @@ impl Model {
         } else {
             (None, None)
         };
+        let (log_done_tx, log_done_rx) = tokio::sync::oneshot::channel::<()>();
+
         let log_tx2 = log_tx.clone();
+        let log_dir_logger = self.log_dir.clone();
+        let instance_name_logger = self.instance_name.clone();
+        let query_logger = query.clone();
+
+        let logger_handle = if let Some(rx) = log_rx {
+            Some(crate::utils::spawn_blocking("save_tts_logs", move || {
+                if let Err(err) = rx.save(&query_logger, &log_dir_logger, &instance_name_logger) {
+                    tracing::error!(?err, "cannot save logs")
+                };
+                let _ = log_done_tx.send(());
+                Ok(())
+            }))
+        } else {
+            let _ = log_done_tx.send(());
+            None
+        };
         let sampling = if query.temperature <= 0. || query.top_k <= 1 {
             candle_transformers::generation::Sampling::ArgMax
         } else {
@@ -416,6 +442,7 @@ impl Model {
         let (in_tx, in_rx) = std::sync::mpsc::channel();
         let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel();
         let text_bos_token = state.config().text_bos_token;
+        let text_tokenizer_recv = self.text_tokenizer.clone();
         let recv_loop = tokio::task::spawn(async move {
             let mut inserted_bos = false;
             while let Some(msg) = receiver.next().await {
@@ -451,7 +478,7 @@ impl Model {
                         continue;
                     }
                     let mut word_tokens: Vec<_> =
-                        text_tokenizer.encode(word)?.into_iter().map(|v| v.id).collect();
+                        text_tokenizer_recv.encode(word)?.into_iter().map(|v| v.id).collect();
                     if !inserted_bos {
                         inserted_bos = true;
                         word_tokens.insert(0, text_bos_token)
@@ -467,13 +494,75 @@ impl Model {
         });
         let mut audio_tokenizer = self.audio_tokenizer.clone();
         audio_tokenizer.reset_state();
-        let text_tokenizer = self.text_tokenizer.clone();
+        let device = state.device().clone();
+        let state_cfg = state.config().clone();
+        let audio_codebooks = state.audio_codebooks();
+        let conditions = conditions.clone();
         let format = query.format;
+        enum AudioMessage {
+            Tokens(Option<Vec<u32>>, u32, usize),
+            Word(WordWithTimestamps),
+        }
+        let (audio_token_tx, audio_token_rx) = std::sync::mpsc::sync_channel::<AudioMessage>(100);
+        let log_tx_audio = log_tx.clone();
+        let _audio_processing_loop = tokio::task::spawn_blocking(move || {
+            let err = (|| {
+                let mut encoder = Encoder::new(format)?;
+                if let Some(header) = encoder.header()? {
+                    out_tx.send(header)?
+                }
+                let text_audio_delay_in_tokens = state_cfg.text_audio_delay_in_tokens;
+                let acoustic_delay = state_cfg.acoustic_delay;
+
+                for msg in audio_token_rx {
+                    match msg {
+                        AudioMessage::Word(wwts) => {
+                            if let Some(oo) = encoder.encode_word(wwts)? {
+                                out_tx.send(oo)?;
+                            }
+                        }
+                        AudioMessage::Tokens(audio_tokens_vec, last_text_token, step_idx) => {
+                            if let Some(audio_tokens_vec) = audio_tokens_vec {
+                                let cb = audio_tokens_vec.len();
+                                // Using Tensor::from_vec is faster.
+                                let audio_tokens = candle::Tensor::from_vec(
+                                    audio_tokens_vec.clone(),
+                                    (1, cb, 1),
+                                    &device,
+                                )?;
+                                if step_idx >= text_audio_delay_in_tokens + acoustic_delay {
+                                    let pcm = audio_tokenizer
+                                        .decode_step(&audio_tokens.into(), &().into())?;
+                                    if let Some(pcm) = pcm.as_option() {
+                                        let pcm = pcm.flatten_all()?.to_vec1::<f32>()?;
+                                        let oo = encoder.encode(&pcm)?;
+                                        out_tx.send(oo)?;
+                                    }
+                                    if let Some(tx) = log_tx_audio.as_ref() {
+                                        tx.send_slice(last_text_token, audio_tokens_vec)
+                                    }
+                                } else if let Some(tx) = log_tx_audio.as_ref() {
+                                    tx.send_slice(last_text_token, audio_tokens_vec)
+                                }
+                            } else if let Some(tx) = log_tx_audio.as_ref() {
+                                let cb = audio_codebooks;
+                                let audio_tokens_vec = vec![0u32; cb];
+                                tx.send_slice(last_text_token, audio_tokens_vec)
+                            }
+                        }
+                    }
+                }
+                Ok::<(), anyhow::Error>(())
+            })();
+            if let Err(err) = err {
+                tracing::error!(?err, "audio processing loop exited with error");
+            }
+        });
+
         let process_loop = tokio::task::spawn_blocking(move || {
             let err = (|| {
                 tracing::info!("starting the inference loop");
                 let text_audio_delay_in_tokens = state.config().text_audio_delay_in_tokens;
-                let acoustic_delay = state.config().acoustic_delay;
                 let text_eop_token = state.config().text_eop_token;
                 let text_pad_token = state.config().text_pad_token;
                 let extra_steps = state.config().extra_steps;
@@ -483,10 +572,6 @@ impl Model {
                 // Start with an empty list to trigger the first bos.
                 let mut word_tokens = Some(vec![]);
 
-                let mut encoder = Encoder::new(format)?;
-                if let Some(header) = encoder.header()? {
-                    out_tx.send(header)?
-                }
                 let mut last_epad_index = 0usize;
                 for step_idx in 0..max_seq_len {
                     let allowed_tokens = match word_tokens.as_ref() {
@@ -510,9 +595,7 @@ impl Model {
                                 let start_s = last_epad_index as f64 / 12.5;
                                 let stop_s = step_idx as f64 / 12.5;
                                 let wwts = WordWithTimestamps { text, start_s, stop_s };
-                                if let Some(oo) = encoder.encode_word(wwts)? {
-                                    out_tx.send(oo)?;
-                                }
+                                audio_token_tx.send(AudioMessage::Word(wwts))?;
                             }
                         }
                         last_epad_index = step_idx;
@@ -525,36 +608,12 @@ impl Model {
                     } else if last_text_token != text_pad_token {
                         token_idx += 1;
                     }
-                    if let Some(audio_tokens) = state.last_audio_tokens() {
-                        let cb = audio_tokens.len();
-                        let audio_tokens =
-                            candle::Tensor::from_vec(audio_tokens, (1, cb, 1), state.device())?;
-                        if step_idx >= text_audio_delay_in_tokens + acoustic_delay {
-                            let audio_tokens_for_log =
-                                log_tx.as_ref().map(|_| audio_tokens.clone());
-                            let pcm =
-                                audio_tokenizer.decode_step(&audio_tokens.into(), &().into())?;
-                            if let Some(pcm) = pcm.as_option() {
-                                let pcm = pcm.flatten_all()?.to_vec1::<f32>()?;
-                                let oo = encoder.encode(&pcm)?;
-                                out_tx.send(oo)?;
-                            }
-                            if let (Some(tx), Some(audio_tokens_for_log)) =
-                                (log_tx.as_ref(), audio_tokens_for_log)
-                            {
-                                tx.send_slice(last_text_token, audio_tokens_for_log)
-                            }
-                        } else if let Some(tx) = log_tx.as_ref() {
-                            tx.send_slice(last_text_token, audio_tokens)
-                        }
-                    } else if log_tx.is_some() {
-                        let cb = state.audio_codebooks();
-                        let audio_tokens =
-                            candle::Tensor::zeros((1, cb, 1), DType::U32, state.device())?;
-                        if let Some(tx) = log_tx.as_ref() {
-                            tx.send_slice(last_text_token, audio_tokens)
-                        }
-                    }
+                    let last_audio_tokens = state.last_audio_tokens();
+                    audio_token_tx.send(AudioMessage::Tokens(
+                        last_audio_tokens,
+                        last_text_token,
+                        step_idx,
+                    ))?;
                 }
                 Ok::<(), anyhow::Error>(())
             })();
@@ -592,37 +651,37 @@ impl Model {
         // appear to be cancelled properly (at least the websocket connection remains open.
         let sleep = tokio::time::sleep(std::time::Duration::from_secs(360));
         tokio::pin!(sleep);
+
+        let mut recv_handle = recv_loop;
+        let mut process_handle = process_loop;
+        let mut send_handle = send_loop;
+
         tokio::select! {
-            _ = sleep => {
+            _ = &mut sleep => {
                 tracing::error!("reached timeout");
             }
-            res = recv_loop => {
-                match res {
-                    Err(err) => tracing::error!(?err, "recv loop ended"),
-                    Ok(Err(err)) => tracing::error!(?err, "recv loop err"),
-                    Ok(Ok(())) => tracing::info!("recv loop ended"),
-                }
-            }
-            p = process_loop => {
-                match p {
-                    Err(err) => tracing::error!(?err, "process loop ended"),
-                    Ok(()) => tracing::info!("process loop ended"),
-                }
-            }
-            res = send_loop => {
-                match res {
-                    Err(err) => tracing::error!(?err, "send loop ended"),
-                    Ok(Err(err)) => tracing::error!(?err, "send loop err"),
-                    Ok(Ok(())) => tracing::info!("send loop ended"),
-                }
-            }
+            _ = &mut recv_handle => {}
+            _ = &mut process_handle => {}
+            _ = &mut send_handle => {}
         }
         tracing::info!("exiting handle-socket");
-        if let Some(log_rx) = log_rx {
-            if let Err(err) = log_rx.save(&query, &self.log_dir, &self.instance_name) {
-                tracing::error!(?err, "cannot save logs")
-            };
-        }
+
+        // Wait briefly for aborted tasks to clean up and ensure logs are saved
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            recv_handle.abort();
+            process_handle.abort();
+            send_handle.abort();
+            let _ = recv_handle.await;
+            let _ = process_handle.await;
+            let _ = send_handle.await;
+            drop(log_tx); // Close log channel
+            if let Some(handle) = logger_handle {
+                let _ = handle.await;
+            }
+            let _ = log_done_rx.await;
+        })
+        .await;
+
         Ok(())
     }
 
@@ -821,25 +880,25 @@ impl Model {
                 } else if last_text_token != text_pad_token {
                     token_idx += 1;
                 }
-                if let Some(audio_tokens) = state.last_audio_tokens() {
-                    let cb = audio_tokens.len();
-                    let audio_tokens =
-                        candle::Tensor::from_vec(audio_tokens, (1, cb, 1), state.device())?;
+                if let Some(audio_tokens_vec) = state.last_audio_tokens() {
+                    let cb = audio_tokens_vec.len();
+                    let audio_tokens = candle::Tensor::from_vec(
+                        audio_tokens_vec.clone(),
+                        (1, cb, 1),
+                        state.device(),
+                    )?;
                     if let Some(tx) = log_tx.as_ref() {
                         if step_idx >= text_audio_delay_in_tokens {
-                            all_audio_tokens.push(audio_tokens.clone())
+                            all_audio_tokens.push(audio_tokens)
                         }
-                        tx.send_slice(last_text_token, audio_tokens)
+                        tx.send_slice(last_text_token, audio_tokens_vec)
                     } else if step_idx >= text_audio_delay_in_tokens {
                         all_audio_tokens.push(audio_tokens)
                     }
-                } else if log_tx.is_some() {
+                } else if let Some(tx) = log_tx.as_ref() {
                     let cb = state.audio_codebooks();
-                    let audio_tokens =
-                        candle::Tensor::zeros((1, cb, 1), DType::U32, state.device())?;
-                    if let Some(tx) = log_tx.as_ref() {
-                        tx.send_slice(last_text_token, audio_tokens)
-                    }
+                    let audio_tokens_vec = vec![0u32; cb];
+                    tx.send_slice(last_text_token, audio_tokens_vec)
                 }
             }
             let dt = start_time.elapsed().as_secs_f64();

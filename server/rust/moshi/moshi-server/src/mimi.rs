@@ -186,6 +186,7 @@ impl Mimi {
                         .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                         .collect();
                     let ncodes = codes.len();
+                    // Using Tensor::from_vec is faster.
                     let codes = Tensor::from_vec(codes, (1, ncodes, 1), &self.device)?;
                     let pcm = audio_tokenizer.decode_step(&codes.into(), &().into())?;
                     if let Some(pcm) = pcm.as_option() {

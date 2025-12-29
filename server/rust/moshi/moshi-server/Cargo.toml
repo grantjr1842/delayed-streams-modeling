@@ -30,6 +30,7 @@ jsonwebtoken = { workspace = true }
 kaudio = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
+mimalloc = { workspace = true }
 moshi = { workspace = true }
 native-tls = { workspace = true }
 nvml-wrapper = { workspace = true }
@@ -61,7 +62,16 @@ vergen = { workspace = true }
 
 [features]
 default = []
-cuda = ["moshi/cuda", "candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
-metal = ["moshi/metal", "candle/metal", "candle-nn/metal", "candle-transformers/metal"]
-
-
+cuda = [
+    "moshi/cuda",
+    "moshi/flash-attn",
+    "candle/cuda",
+    "candle-nn/cuda",
+    "candle-transformers/cuda",
+]
+metal = [
+    "moshi/metal",
+    "candle/metal",
+    "candle-nn/metal",
+    "candle-transformers/metal",
+]

@@ -8,7 +8,9 @@
 // more efficient matmuls
 // 2. Quantized tensors cannot be easily split (regarding cross attention and QKV proj weights)
 // 3. Linear and Quantized linear layers are two different types
-use crate::nn::{linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder};
+use crate::nn::{
+    linear, linear_from, matmul_dtype, MaybeQuantizedLinear, MaybeQuantizedVarBuilder,
+};
 use crate::streaming::{StreamMask, StreamTensor, StreamingModule};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 
@@ -147,7 +149,9 @@ impl XaGate {
                     CrossAttentionGating::ConditionalGatedSigmoidLearnableBias
                         | CrossAttentionGating::ConditionalGatedTanhLearnableBias
                 );
-                let alpha_vb = if vb.contains_key("alpha.0.weight") || vb.contains_key("alpha.0.in_proj.weight") {
+                let alpha_vb = if vb.contains_key("alpha.0.weight")
+                    || vb.contains_key("alpha.0.in_proj.weight")
+                {
                     vb.pp("alpha")
                 } else if vb.contains_key("0.weight") || vb.contains_key("0.in_proj.weight") {
                     vb.pp("")
@@ -390,8 +394,8 @@ impl RotaryEmbedding {
     pub fn rope(&self, pos: &Tensor) -> Result<Rope> {
         let t = pos.to_dtype(DType::F32)?;
         let freqs = match *t.dims() {
-            [d] => t.reshape((d, 1))?.matmul(&self.inv_freq)?,
-            [b, d] => t.reshape((b * d, 1))?.matmul(&self.inv_freq)?.reshape((b, d, ()))?,
+            [d] => t.reshape((d, 1))?.broadcast_mul(&self.inv_freq)?,
+            [b, d] => t.reshape((b, d, 1))?.broadcast_mul(&self.inv_freq)?,
             _ => candle::bail!("Invalid shape for rotary embedding {pos:?}"),
         };
         Ok(Rope { sin: freqs.sin()?, cos: freqs.cos()? })
@@ -437,7 +441,8 @@ impl StreamingMultiheadAttention {
         let in_proj_bias =
             if cfg.bias_attn { Some(vb.get_unquantized(out_dim, "in_proj_bias")?) } else { None };
         let in_proj = linear_from(in_proj_weight, in_proj_bias)?;
-        let out_proj = linear(embed_dim, cfg.num_heads * head_dim, cfg.bias_attn, vb.pp("out_proj"))?;
+        let out_proj =
+            linear(embed_dim, cfg.num_heads * head_dim, cfg.bias_attn, vb.pp("out_proj"))?;
         Ok(Self {
             in_proj,
             out_proj,
@@ -446,7 +451,7 @@ impl StreamingMultiheadAttention {
             head_dim,
             context: cfg.context,
             kv_cache: KvCache::new(2, cfg.context),
-            use_flash_attn: false,
+            use_flash_attn: true,
             span: tracing::span!(tracing::Level::TRACE, "mha"),
         })
     }
@@ -486,7 +491,7 @@ impl StreamingMultiheadAttention {
             k = rope.apply_rotary_emb(&k)?;
         }
 
-        let (k, v) = { self.kv_cache.append(&k.contiguous()?, &v.contiguous()?)? };
+        let (k, v) = { self.kv_cache.append(&k, &v)? };
         // The KV cache keeps all the data at the moment, we want to trim
         // down the part that comes from the cache to at most context to
         // be coherent with the mask shape we provide.
@@ -500,12 +505,23 @@ impl StreamingMultiheadAttention {
             (k.clone(), v.clone())
         };
 
-        let xs = if q.dtype() == DType::BF16 && self.use_flash_attn {
+        let xs = if (q.dtype() == DType::BF16 || q.dtype() == DType::F16)
+            && self.use_flash_attn
+            && q.device().is_cuda()
+        {
             let q = q.transpose(1, 2)?;
             let k = k.transpose(1, 2)?;
             let v = v.transpose(1, 2)?;
             let softmax_scale = 1f32 / (self.head_dim as f32).sqrt();
-            flash_attn(&q, &k, &v, softmax_scale, mask.is_some())?.transpose(1, 2)?
+            tracing::debug!(
+                head_dim = self.head_dim,
+                num_heads = self.num_heads,
+                dtype = ?q.dtype(),
+                "using flash_attn"
+            );
+            tracing::trace_span!("flash_attn")
+                .in_scope(|| flash_attn(&q, &k, &v, softmax_scale, mask.is_some()))?
+                .transpose(1, 2)?
         } else {
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
             let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;
@@ -864,35 +880,50 @@ impl StreamingTransformer {
         // Note that the mask still discards the values that are before context as this can happen
         // when t > context.
         let mask = {
-            // mask shape should be b, h, t, k
-            // self.layers[0].self_attn.kv_cache.attn_mask(t, xs.device())?;
-            // let mask = mask.broadcast_left((b, self.num_heads))?;
             let ks = self.layers[0].self_attn.kv_cache.positions(t);
             let min_ks = ks.iter().min().context("no positions, is t == 0?")?;
             if t == 1 && self.last_reset_pos.iter().all(|v| v <= min_ks) {
-                // No need for a mask here.
                 None
             } else {
-                let mut mask = Vec::with_capacity(b * self.num_heads * t * ks.len());
-                for &last_reset_pos in self.last_reset_pos.iter() {
-                    for t_pos in 0..t {
-                        let t_pos = t_pos + current_seq_len;
-                        for &k_pos in ks.iter() {
-                            let m = if last_reset_pos <= k_pos
-                                && k_pos <= t_pos
-                                && t_pos <= k_pos + self.context
-                            {
-                                0f32
-                            } else {
-                                f32::NEG_INFINITY
-                            };
-                            mask.push(m);
-                        }
-                    }
-                }
-                let mask = Tensor::from_vec(mask, (b, 1, t, ks.len()), xs.device())?
-                    .to_dtype(xs.dtype())?
-                    .expand((b, self.num_heads, t, ks.len()))?;
+                let dev = xs.device();
+                let last_reset_pos = Tensor::from_vec(
+                    self.last_reset_pos.iter().map(|&v| v as u32).collect::<Vec<_>>(),
+                    (b, 1, 1),
+                    dev,
+                )?
+                .to_dtype(DType::F32)?;
+                let t_pos =
+                    Tensor::arange(current_seq_len as u32, (current_seq_len + t) as u32, dev)?
+                        .reshape((1, t, 1))?
+                        .to_dtype(DType::F32)?;
+                let k_pos = Tensor::from_vec(
+                    ks.iter().map(|&v| v as u32).collect::<Vec<_>>(),
+                    (1, 1, ks.len()),
+                    dev,
+                )?
+                .to_dtype(DType::F32)?;
+
+                // last_reset_pos <= k_pos
+                let cond1 = k_pos.broadcast_ge(&last_reset_pos)?;
+                // k_pos <= t_pos
+                let cond2 = k_pos.broadcast_le(&t_pos)?;
+                // t_pos <= k_pos + self.context
+                let cond3 = t_pos
+                    .broadcast_le(&k_pos.broadcast_add(&Tensor::new(self.context as f32, dev)?)?)?;
+
+                let mask_bool = cond1.broadcast_as((b, t, ks.len()))?;
+                let mask_bool = mask_bool.where_cond(&cond2, &mask_bool.zeros_like()?)?;
+                let mask_bool = mask_bool.where_cond(&cond3, &mask_bool.zeros_like()?)?;
+
+                let neg_inf =
+                    Tensor::new(f32::NEG_INFINITY, dev)?.broadcast_as((b, t, ks.len()))?;
+                let zero = Tensor::zeros((b, t, ks.len()), DType::F32, dev)?;
+
+                let mask = mask_bool
+                    .where_cond(&zero, &neg_inf)?
+                    .unsqueeze(1)?
+                    .expand((b, self.num_heads, t, ks.len()))?
+                    .to_dtype(xs.dtype())?;
                 Some(mask)
             }
         };

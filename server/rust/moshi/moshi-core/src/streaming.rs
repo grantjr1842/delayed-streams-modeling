@@ -40,7 +40,8 @@ impl StreamMask {
     }
 
     pub fn new(cpu: Vec<bool>, device: &Device) -> Result<Self> {
-        let mask = cpu.iter().map(|&v| u8::from(v)).collect::<Vec<u8>>();
+        let mut mask = Vec::with_capacity(cpu.len());
+        mask.extend(cpu.iter().map(|&v| u8::from(v)));
         let mask = Tensor::new(mask, device)?;
         Ok(Self(Some(MaskInner { cpu, mask })))
     }

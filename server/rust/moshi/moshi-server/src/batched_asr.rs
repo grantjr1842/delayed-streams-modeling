@@ -85,11 +85,17 @@ impl Channel {
 
     fn extend_data(&mut self, pcm: &[f32], out_pcm: &mut [f32]) -> bool {
         debug_assert_eq!(out_pcm.len(), FRAME_SIZE);
+        if pcm.is_empty() && self.data.len() < FRAME_SIZE {
+            return false;
+        }
         if self.data.is_empty() && pcm.len() >= FRAME_SIZE {
             out_pcm.copy_from_slice(&pcm[..FRAME_SIZE]);
             self.data.extend(&pcm[FRAME_SIZE..]);
             true
         } else {
+            if !pcm.is_empty() {
+                self.data.reserve(pcm.len());
+            }
             self.data.extend(pcm);
             if self.data.len() >= FRAME_SIZE {
                 let cont = self.data.make_contiguous();
@@ -269,7 +275,7 @@ impl BatchedAsrInner {
 
         struct PipelineMsg {
             audio_tokens: Tensor,
-            mask: Vec<bool>,
+            mask: moshi::StreamMask,
             channel_ids: Vec<Option<ChannelId>>,
             new_markers: Vec<Marker>,
             resets: Vec<usize>,
@@ -285,8 +291,6 @@ impl BatchedAsrInner {
         let mut mimi_tokenizer = state.audio_tokenizer.clone();
 
         let dev_encoder = dev.clone();
-        let dev_inference = dev.clone();
-
         #[cfg(feature = "cuda")]
         let mut pinned_batch_pcm = if let Device::Cuda(cuda_dev) = &dev_encoder {
             unsafe { cuda_dev.cuda_stream().context().alloc_pinned::<f32>(FRAME_SIZE * batch_size) }
@@ -302,6 +306,7 @@ impl BatchedAsrInner {
             let mut step_idx = 0;
             let mut batch_pcm_vec = vec![0f32; FRAME_SIZE * batch_size];
             let mut channel_ids = vec![None; batch_size];
+            let mut mask = vec![false; batch_size];
             loop {
                 let mut new_markers = Vec::new();
                 let mut resets = Vec::new();
@@ -322,12 +327,13 @@ impl BatchedAsrInner {
                     &mut batch_pcm_vec
                 };
 
-                let mask = asr_inner_encoder.pre_process_pipelined(
+                asr_inner_encoder.pre_process_pipelined(
                     asr_delay_in_tokens,
                     step_idx,
                     &mut new_markers,
                     &mut resets,
                     batch_pcm,
+                    &mut mask,
                     &mut channel_ids,
                 );
 
@@ -349,7 +355,7 @@ impl BatchedAsrInner {
                         if pipeline_tx
                             .send(PipelineMsg {
                                 audio_tokens,
-                                mask,
+                                mask: mask_obj,
                                 channel_ids: channel_ids.clone(),
                                 new_markers,
                                 resets,
@@ -368,7 +374,7 @@ impl BatchedAsrInner {
                         if pipeline_tx
                             .send(PipelineMsg {
                                 audio_tokens: empty_tokens,
-                                mask,
+                                mask: mask_obj,
                                 channel_ids: channel_ids.clone(),
                                 new_markers,
                                 resets,
@@ -439,7 +445,14 @@ impl BatchedAsrInner {
             tracing::info!("starting asr loop {batch_size}");
             let mut step_idx = 0;
             for msg in pipeline_rx {
-                let PipelineMsg { audio_tokens, mask, channel_ids, new_markers, resets, has_data } =
+                let PipelineMsg {
+                    audio_tokens,
+                    mask,
+                    channel_ids,
+                    new_markers,
+                    resets,
+                    has_data,
+                } =
                     msg;
 
                 for bid in resets {
@@ -449,7 +462,7 @@ impl BatchedAsrInner {
                 }
 
                 if has_data {
-                    let mask_obj = moshi::StreamMask::new(mask, &dev_inference)?;
+                    let mask_obj = mask;
                     let start_time = std::time::Instant::now();
                     let asr_msgs = state.step_tokens(
                         &audio_tokens,
@@ -483,13 +496,12 @@ impl BatchedAsrInner {
                         break;
                     }
                 } else if !new_markers.is_empty() {
-                    let mask_obj = moshi::StreamMask::new(mask, &dev_inference)?;
                     if post_tx
                         .send(PostProcessMsg {
                             asr_msgs: vec![],
                             step_idx,
                             new_markers,
-                            mask: mask_obj,
+                            mask,
                             channel_ids,
                         })
                         .is_err()
@@ -510,14 +522,13 @@ impl BatchedAsrInner {
         new_markers: &mut Vec<Marker>,
         resets: &mut Vec<usize>,
         batch_pcm: &mut [f32],
+        mask: &mut [bool],
         channel_ids: &mut [Option<ChannelId>],
-    ) -> Vec<bool> {
+    ) {
         use rayon::prelude::*;
 
-        let mut mask = vec![false; channel_ids.len()];
-        for channel_id in channel_ids.iter_mut() {
-            *channel_id = None;
-        }
+        mask.fill(false);
+        channel_ids.fill(None);
 
         let todo = batch_pcm
             .par_chunks_mut(FRAME_SIZE)
@@ -598,7 +609,6 @@ impl BatchedAsrInner {
                 PipelineEvent::Marker(m) => new_markers.push(m),
             }
         }
-        mask
     }
 
     fn post_process(

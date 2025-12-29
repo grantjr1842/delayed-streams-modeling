@@ -817,8 +817,8 @@ async fn run_file(
 
         let mut resampler =
             FileResampler::new(sr_in as u32, OUTPUT_SAMPLE_RATE_HZ as u32, hq_resample)?;
-        let mut resample_buf = Vec::<f32>::new();
-        let mut pending = Vec::<f32>::new();
+        let mut resample_buf = Vec::<f32>::with_capacity(FILE_INPUT_CHUNK_SAMPLES);
+        let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
         let mut pending_read_idx = 0usize;
 
         if silence_prefix_ms > 0 {
@@ -863,6 +863,7 @@ async fn run_file(
                 continue;
             }
 
+            pending.reserve(samples.len());
             pending.extend_from_slice(samples);
 
             while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {
@@ -899,6 +900,7 @@ async fn run_file(
         if let Some(resampler) = resampler.as_mut() {
             resampler.flush_into(&mut resample_buf)?;
             if !resample_buf.is_empty() {
+                pending.reserve(resample_buf.len());
                 pending.extend_from_slice(&resample_buf);
             }
         }

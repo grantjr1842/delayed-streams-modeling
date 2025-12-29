@@ -177,6 +177,10 @@ impl StreamTensor {
         self.0.as_ref()
     }
 
+    pub fn into_option(self) -> Option<Tensor> {
+        self.0
+    }
+
     pub fn apply<M: candle::Module>(&self, m: &M) -> Result<Self> {
         match &self.0 {
             None => Ok(Self::empty()),

@@ -3,11 +3,10 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": "."
+    "types": ["node"]
   },
-  "include": ["src/**/*", "drizzle.config.ts"]
+  "include": ["server/typescript/auth-server/**/*.ts"],
+  "exclude": ["**/node_modules", "**/dist", "**/build", "**/coverage", "**/out"]
 }

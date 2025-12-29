@@ -222,6 +222,7 @@ pub struct MsgSender {
     pw: ogg::PacketWriter<'static, Vec<u8>>,
     encoder: opus::Encoder,
     out_pcm: std::collections::VecDeque<f32>,
+    out_pcm_chunk: Vec<f32>,
     out_pcm_buf: Vec<u8>,
     total_data: usize,
     sender: SplitSink<ws::WebSocket, ws::Message>,
@@ -242,11 +243,14 @@ impl MsgSender {
         let mut tags = Vec::new();
         crate::audio::write_opus_tags(&mut tags)?;
         pw.write_packet(tags, 42, ogg::PacketWriteEndInfo::EndPage, 0)?;
-        Ok(Self { pw, encoder, out_pcm, out_pcm_buf, total_data: 0, sender })
+        let out_pcm_chunk = vec![0.0; OPUS_ENCODER_FRAME_SIZE];
+        Ok(Self { pw, encoder, out_pcm, out_pcm_chunk, out_pcm_buf, total_data: 0, sender })
     }
 
     async fn send_text(&mut self, text: String) -> Result<()> {
-        let msg: Vec<u8> = [&[MsgType::Text.to_u8()], text.as_bytes()].concat();
+        let mut msg = Vec::with_capacity(1 + text.len());
+        msg.push(MsgType::Text.to_u8());
+        msg.extend_from_slice(text.as_bytes());
         let msg = ws::Message::Binary(msg.into());
         self.sender.send(msg).await?;
         Ok(())
@@ -256,7 +260,9 @@ impl MsgSender {
         // The payload is made of two fields.
         // 1. Protocol version (`u32`) - always 0 for now.
         // 2. Model version (`u32`).
-        let msg: Vec<u8> = [&[MsgType::Handshake.to_u8()], [0u8; 8].as_slice()].concat();
+        let mut msg = Vec::with_capacity(1 + 8);
+        msg.push(MsgType::Handshake.to_u8());
+        msg.extend_from_slice(&[0u8; 8]);
         let msg = ws::Message::Binary(msg.into());
         self.sender.send(msg).await?;
         Ok(())
@@ -264,26 +270,26 @@ impl MsgSender {
 
     async fn send_metadata(&mut self, md: Box<MetaData>) -> Result<()> {
         let bytes = serde_json::to_vec(&md)?;
-        let msg: Vec<u8> = [&[MsgType::Metadata.to_u8()], bytes.as_slice()].concat();
+        let mut msg = Vec::with_capacity(1 + bytes.len());
+        msg.push(MsgType::Metadata.to_u8());
+        msg.extend_from_slice(&bytes);
         let msg = ws::Message::Binary(msg.into());
         self.sender.send(msg).await?;
         Ok(())
     }
 
     async fn send_pcm(&mut self, pcm: Vec<f32>) -> Result<()> {
-        self.out_pcm.extend(pcm.iter());
+        self.out_pcm.extend(pcm);
         self.total_data += pcm.len();
         let nchunks = self.out_pcm.len() / OPUS_ENCODER_FRAME_SIZE;
         for _chunk_id in 0..nchunks {
-            let mut chunk = Vec::with_capacity(OPUS_ENCODER_FRAME_SIZE);
-            for _i in 0..OPUS_ENCODER_FRAME_SIZE {
-                let v = match self.out_pcm.pop_front() {
-                    None => anyhow::bail!("unexpected err popping from pcms"),
-                    Some(v) => v,
-                };
-                chunk.push(v)
+            for slot in self.out_pcm_chunk.iter_mut() {
+                *slot = self
+                    .out_pcm
+                    .pop_front()
+                    .ok_or_else(|| anyhow::anyhow!("unexpected err popping from pcms"))?;
             }
-            let size = self.encoder.encode_float(&chunk, &mut self.out_pcm_buf)?;
+            let size = self.encoder.encode_float(&self.out_pcm_chunk, &mut self.out_pcm_buf)?;
             if size > 0 {
                 let msg = self.out_pcm_buf[..size].to_vec();
                 self.pw.write_packet(
@@ -297,7 +303,9 @@ impl MsgSender {
             }
             let data = self.pw.inner_mut();
             if !data.is_empty() {
-                let msg: Vec<u8> = [&[MsgType::Audio.to_u8()], data.as_slice()].concat();
+                let mut msg = Vec::with_capacity(1 + data.len());
+                msg.push(MsgType::Audio.to_u8());
+                msg.extend_from_slice(data);
                 let msg = ws::Message::Binary(msg.into());
                 self.sender.send(msg).await?;
                 self.sender.flush().await?;

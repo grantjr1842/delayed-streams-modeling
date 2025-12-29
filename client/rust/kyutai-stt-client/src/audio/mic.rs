@@ -274,9 +274,9 @@ fn build_stream_f32(
     let channels_usize = usize::from(channels);
     let mut resampler =
         MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
-    let mut mono_buf = Vec::<f32>::new();
-    let mut resample_buf = Vec::<f32>::new();
-    let mut pending = Vec::<f32>::new();
+    let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
+    let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
+    let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
     let mut pending_read_idx = 0usize;
 
     device
@@ -299,6 +299,7 @@ fn build_stream_f32(
                     return;
                 }
 
+                pending.reserve(samples.len());
                 pending.extend_from_slice(samples);
 
                 while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {
@@ -343,9 +344,9 @@ fn build_stream_i16(
     let channels_usize = usize::from(channels);
     let mut resampler =
         MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
-    let mut mono_buf = Vec::<f32>::new();
-    let mut resample_buf = Vec::<f32>::new();
-    let mut pending = Vec::<f32>::new();
+    let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
+    let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
+    let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
     let mut pending_read_idx = 0usize;
 
     device
@@ -368,6 +369,7 @@ fn build_stream_i16(
                     return;
                 }
 
+                pending.reserve(samples.len());
                 pending.extend_from_slice(samples);
 
                 while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {
@@ -412,9 +414,9 @@ fn build_stream_u16(
     let channels_usize = usize::from(channels);
     let mut resampler =
         MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
-    let mut mono_buf = Vec::<f32>::new();
-    let mut resample_buf = Vec::<f32>::new();
-    let mut pending = Vec::<f32>::new();
+    let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
+    let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
+    let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
     let mut pending_read_idx = 0usize;
 
     device
@@ -437,6 +439,7 @@ fn build_stream_u16(
                     return;
                 }
 
+                pending.reserve(samples.len());
                 pending.extend_from_slice(samples);
 
                 while pending.len().saturating_sub(pending_read_idx) >= OUTPUT_CHUNK_SAMPLES {

@@ -110,6 +110,25 @@ pub struct BenchmarkResult {
     pub throughput_unit: Option<String>,
 }
 
+impl From<moshi_server::bench::LatencyStats> for BenchmarkResult {
+    fn from(stats: moshi_server::bench::LatencyStats) -> Self {
+        Self {
+            name: stats.name.to_string(),
+            iterations: stats.count as usize,
+            warmup_iterations: 0, // Not tracked in LatencyStats
+            total_duration_ms: stats.mean.as_secs_f64() * 1000.0 * stats.count as f64,
+            mean_ms: stats.mean.as_secs_f64() * 1000.0,
+            min_ms: stats.min.as_secs_f64() * 1000.0,
+            max_ms: stats.max.as_secs_f64() * 1000.0,
+            p50_ms: stats.p50.as_secs_f64() * 1000.0,
+            p95_ms: stats.p95.as_secs_f64() * 1000.0,
+            p99_ms: stats.p99.as_secs_f64() * 1000.0,
+            throughput: None,
+            throughput_unit: None,
+        }
+    }
+}
+
 /// Full benchmark suite results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkSuiteResults {
@@ -526,6 +545,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moshi_server::bench::LatencyRecorder;
+    use std::time::Duration;
 
     #[test]
     fn test_benchmark_result_from_stats() {

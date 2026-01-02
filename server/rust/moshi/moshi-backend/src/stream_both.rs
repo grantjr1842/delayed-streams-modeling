@@ -279,8 +279,8 @@ impl MsgSender {
     }
 
     async fn send_pcm(&mut self, pcm: Vec<f32>) -> Result<()> {
-        self.out_pcm.extend(pcm);
         self.total_data += pcm.len();
+        self.out_pcm.extend(pcm);
         let nchunks = self.out_pcm.len() / OPUS_ENCODER_FRAME_SIZE;
         for _chunk_id in 0..nchunks {
             for slot in self.out_pcm_chunk.iter_mut() {

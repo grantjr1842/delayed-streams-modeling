@@ -233,6 +233,7 @@ pub mod lm {
     }
 
     /// Record an LM step with its duration.
+    #[allow(dead_code)]
     pub fn record_step(duration_secs: f64) {
         STEP_DURATION.observe(duration_secs);
         STEPS_TOTAL.inc();
@@ -287,12 +288,14 @@ pub mod mimi {
     }
 
     /// Record an encode operation with its duration.
+    #[allow(dead_code)]
     pub fn record_encode(duration_secs: f64, frame_count: u64) {
         ENCODE_DURATION.observe(duration_secs);
         FRAMES_ENCODED.inc_by(frame_count);
     }
 
     /// Record a decode operation with its duration.
+    #[allow(dead_code)]
     pub fn record_decode(duration_secs: f64, frame_count: u64) {
         DECODE_DURATION.observe(duration_secs);
         FRAMES_DECODED.inc_by(frame_count);
@@ -347,6 +350,7 @@ pub mod tts {
     }
 
     /// Record a TTS synthesis with its duration and audio length.
+    #[allow(dead_code)]
     pub fn record_synthesis(wall_time_secs: f64, audio_duration_secs: f64) {
         SYNTHESIS_DURATION.observe(wall_time_secs);
         AUDIO_DURATION.inc_by(audio_duration_secs);
@@ -396,6 +400,7 @@ pub mod memory {
     }
 
     /// Update VRAM usage metrics.
+    #[allow(dead_code)]
     pub fn update_vram(current_bytes: f64, peak_bytes: f64) {
         CURRENT_VRAM_BYTES.set(current_bytes);
         let current_peak = PEAK_VRAM_BYTES.get();
@@ -455,11 +460,13 @@ pub mod pipeline {
     }
 
     /// Record a pipeline stall event.
+    #[allow(dead_code)]
     pub fn record_stall() {
         STALLS.inc();
     }
 
     /// Record overlap efficiency for a batch.
+    #[allow(dead_code)]
     pub fn record_overlap(efficiency: f64) {
         OVERLAP_EFFICIENCY.observe(efficiency);
     }

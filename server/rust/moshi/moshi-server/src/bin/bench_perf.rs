@@ -33,6 +33,9 @@ use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 
+// Candle imports for tensor benchmarks
+use candle::{Device, Tensor};
+
 #[derive(Parser, Debug)]
 #[clap(name = "bench_perf", about = "Moshi performance benchmarking tool")]
 struct Args {
@@ -67,6 +70,10 @@ struct Args {
     /// Sustained load test
     #[clap(long)]
     sustained: bool,
+
+    /// Tensor operations benchmark (uses Candle)
+    #[clap(long)]
+    tensor: bool,
 
     /// Number of measurement iterations
     #[clap(long, default_value = "100")]
@@ -356,6 +363,49 @@ fn benchmark_sustained_load(args: &Args) -> BenchmarkResult {
     )
 }
 
+/// Tensor operations benchmark (uses Candle)
+fn benchmark_tensor_ops(args: &Args) -> BenchmarkResult {
+    println!("Running tensor operations benchmark...");
+
+    let device = if args.cpu {
+        Device::Cpu
+    } else {
+        #[cfg(feature = "cuda")]
+        {
+            Device::new_cuda(0).unwrap_or(Device::Cpu)
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            Device::Cpu
+        }
+    };
+
+    println!("  Using device: {:?}", device);
+
+    // Setup tensors for matmul: (1024x1024) * (1024x1024)
+    let size = 1024;
+    let a = Tensor::randn(0f32, 1f32, (size, size), &device).unwrap();
+    let b = Tensor::randn(0f32, 1f32, (size, size), &device).unwrap();
+
+    // Warmup once outside to ensure allocation
+    let _ = a.matmul(&b).unwrap();
+
+    run_simple_benchmark(
+        "tensor_matmul_1024x1024",
+        args.warmup,
+        args.iterations,
+        || {
+            let _c = a.matmul(&b).unwrap();
+            #[cfg(feature = "cuda")]
+            if let Device::Cuda(dev) = &device {
+                 let _ = dev.synchronize();
+            }
+            Ok(())
+        },
+        args.verbose,
+    )
+}
+
 /// Print benchmark results in a formatted table
 fn print_results(results: &HashMap<String, BenchmarkResult>) {
     println!("\n{:=<80}", "");
@@ -406,37 +456,42 @@ fn main() -> Result<()> {
     // Determine which benchmarks to run
     let run_all = args.all
         || (!args.mimi && !args.lm && !args.transformer && !args.e2e
-            && !args.batch && !args.memory && !args.sustained);
+            && !args.batch && !args.memory && !args.sustained && !args.tensor);
 
     // Run selected benchmarks
     if run_all || args.transformer {
         let result = benchmark_transformer_overhead(&args);
-        results.insert("transformer".to_string(), result);
+        results.insert("transformer_overhead".to_string(), result);
     }
 
     if run_all || args.transformer {
         let result = benchmark_attention_overhead(&args);
-        results.insert("attention".to_string(), result);
+        results.insert("attention_overhead".to_string(), result);
     }
 
     if run_all || args.batch {
         let result = benchmark_batch_overhead(&args);
-        results.insert("batch".to_string(), result);
+        results.insert("batch_overhead".to_string(), result);
     }
 
     if run_all || args.memory {
         let result = benchmark_memory_allocation(&args);
-        results.insert("memory".to_string(), result);
+        results.insert("memory_allocation".to_string(), result);
     }
 
     if run_all || args.sustained {
         let result = benchmark_sustained_load(&args);
-        results.insert("sustained".to_string(), result);
+        results.insert("sustained_load".to_string(), result);
+    }
+
+    if run_all || args.tensor {
+        let result = benchmark_tensor_ops(&args);
+        results.insert("tensor_ops".to_string(), result);
     }
 
     // Note: Mimi, LM, and E2E benchmarks require loading actual models
     // These would need model paths and would be implemented when models are available
-    if args.mimi {
+    if run_all || args.mimi {
         println!("Note: Mimi benchmark requires model loading - using synthetic test");
         let result = run_simple_benchmark(
             "mimi_synthetic",
@@ -454,7 +509,7 @@ fn main() -> Result<()> {
         results.insert("mimi".to_string(), result);
     }
 
-    if args.lm {
+    if run_all || args.lm {
         println!("Note: LM benchmark requires model loading - using synthetic test");
         let result = run_simple_benchmark(
             "lm_synthetic",

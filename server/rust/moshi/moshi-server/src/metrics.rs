@@ -184,3 +184,283 @@ pub mod errors {
         AUTH_ERROR_TOTAL.with_label_values(&[error_type]).inc();
     }
 }
+
+/// LM inference performance metrics.
+pub mod lm {
+    use super::*;
+    lazy_static! {
+        /// Per-step LM inference latency distribution.
+        pub static ref STEP_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "lm_step_duration_seconds",
+            "LM model step duration distribution.",
+            vec![0.005, 0.010, 0.020, 0.030, 0.040, 0.050, 0.075, 0.100, 0.150, 0.200],
+        ))
+        .unwrap();
+
+        /// Real-time tokens per second throughput.
+        pub static ref TOKENS_PER_SECOND: Gauge = register_gauge!(opts!(
+            "lm_tokens_per_second",
+            "Current LM tokens per second throughput."
+        ))
+        .unwrap();
+
+        /// Batch utilization ratio (0-1).
+        pub static ref BATCH_UTILIZATION: Histogram = register_histogram!(histogram_opts!(
+            "lm_batch_utilization",
+            "LM batch slot utilization ratio.",
+            vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        ))
+        .unwrap();
+
+        /// Number of pending requests in queue.
+        pub static ref QUEUE_DEPTH: Gauge = register_gauge!(opts!(
+            "lm_queue_depth",
+            "Number of pending requests in LM queue."
+        ))
+        .unwrap();
+
+        /// Total inference steps completed.
+        pub static ref STEPS_TOTAL: IntCounter =
+            register_int_counter!("lm_steps_total", "Total LM inference steps completed.")
+                .unwrap();
+
+        /// Number of active LM connections.
+        pub static ref ACTIVE_CONNECTIONS: Gauge = register_gauge!(opts!(
+            "lm_active_connections",
+            "Number of active LM connections."
+        ))
+        .unwrap();
+    }
+
+    /// Record an LM step with its duration.
+    pub fn record_step(duration_secs: f64) {
+        STEP_DURATION.observe(duration_secs);
+        STEPS_TOTAL.inc();
+    }
+}
+
+/// Mimi encoder/decoder performance metrics.
+pub mod mimi {
+    use super::*;
+    lazy_static! {
+        /// Audio encoding latency distribution.
+        pub static ref ENCODE_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "mimi_encode_duration_seconds",
+            "Mimi audio encoding latency distribution.",
+            vec![0.001, 0.002, 0.005, 0.010, 0.020, 0.030, 0.050, 0.075, 0.100],
+        ))
+        .unwrap();
+
+        /// Audio decoding latency distribution.
+        pub static ref DECODE_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "mimi_decode_duration_seconds",
+            "Mimi audio decoding latency distribution.",
+            vec![0.001, 0.002, 0.005, 0.010, 0.020, 0.030, 0.050, 0.075, 0.100],
+        ))
+        .unwrap();
+
+        /// Total frames encoded.
+        pub static ref FRAMES_ENCODED: IntCounter =
+            register_int_counter!("mimi_frames_encoded_total", "Total audio frames encoded.")
+                .unwrap();
+
+        /// Total frames decoded.
+        pub static ref FRAMES_DECODED: IntCounter =
+            register_int_counter!("mimi_frames_decoded_total", "Total audio frames decoded.")
+                .unwrap();
+
+        /// Encode step latency (for batched operations).
+        pub static ref BATCH_ENCODE_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "mimi_batch_encode_duration_seconds",
+            "Mimi batch encoding latency distribution.",
+            vec![0.005, 0.010, 0.020, 0.030, 0.050, 0.075, 0.100, 0.150],
+        ))
+        .unwrap();
+
+        /// Decode step latency (for batched operations).
+        pub static ref BATCH_DECODE_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "mimi_batch_decode_duration_seconds",
+            "Mimi batch decoding latency distribution.",
+            vec![0.005, 0.010, 0.020, 0.030, 0.050, 0.075, 0.100, 0.150],
+        ))
+        .unwrap();
+    }
+
+    /// Record an encode operation with its duration.
+    pub fn record_encode(duration_secs: f64, frame_count: u64) {
+        ENCODE_DURATION.observe(duration_secs);
+        FRAMES_ENCODED.inc_by(frame_count);
+    }
+
+    /// Record a decode operation with its duration.
+    pub fn record_decode(duration_secs: f64, frame_count: u64) {
+        DECODE_DURATION.observe(duration_secs);
+        FRAMES_DECODED.inc_by(frame_count);
+    }
+}
+
+/// TTS synthesis performance metrics.
+pub mod tts {
+    use super::*;
+    lazy_static! {
+        /// Full TTS synthesis latency distribution.
+        pub static ref SYNTHESIS_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "tts_synthesis_duration_seconds",
+            "TTS synthesis latency distribution.",
+            vec![0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0],
+        ))
+        .unwrap();
+
+        /// Total audio seconds generated.
+        pub static ref AUDIO_DURATION: Counter = register_counter!(opts!(
+            "tts_audio_duration_seconds_total",
+            "Total audio seconds generated by TTS."
+        ))
+        .unwrap();
+
+        /// Real-time factor (audio_time / wall_time). Values < 1 mean faster than real-time.
+        pub static ref REALTIME_FACTOR: Gauge = register_gauge!(opts!(
+            "tts_realtime_factor",
+            "TTS real-time factor (audio_time / wall_time)."
+        ))
+        .unwrap();
+
+        /// Number of active TTS synthesis requests.
+        pub static ref ACTIVE_REQUESTS: Gauge = register_gauge!(opts!(
+            "tts_active_requests",
+            "Number of active TTS synthesis requests."
+        ))
+        .unwrap();
+
+        /// Total synthesis requests completed.
+        pub static ref REQUESTS_TOTAL: IntCounter =
+            register_int_counter!("tts_requests_total", "Total TTS synthesis requests completed.")
+                .unwrap();
+
+        /// Vocoder (HiFi-GAN/HiFT) latency distribution.
+        pub static ref VOCODER_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "tts_vocoder_duration_seconds",
+            "TTS vocoder latency distribution.",
+            vec![0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0],
+        ))
+        .unwrap();
+    }
+
+    /// Record a TTS synthesis with its duration and audio length.
+    pub fn record_synthesis(wall_time_secs: f64, audio_duration_secs: f64) {
+        SYNTHESIS_DURATION.observe(wall_time_secs);
+        AUDIO_DURATION.inc_by(audio_duration_secs);
+        if wall_time_secs > 0.0 {
+            REALTIME_FACTOR.set(audio_duration_secs / wall_time_secs);
+        }
+        REQUESTS_TOTAL.inc();
+    }
+}
+
+/// Memory and allocation performance metrics.
+pub mod memory {
+    use super::*;
+    lazy_static! {
+        /// Total tensor allocations count.
+        pub static ref TENSOR_ALLOCATIONS: IntCounter =
+            register_int_counter!("memory_tensor_allocations_total", "Total tensor allocations.")
+                .unwrap();
+
+        /// Peak VRAM usage in bytes.
+        pub static ref PEAK_VRAM_BYTES: Gauge = register_gauge!(opts!(
+            "memory_peak_vram_bytes",
+            "Peak VRAM usage in bytes."
+        ))
+        .unwrap();
+
+        /// Current VRAM usage in bytes.
+        pub static ref CURRENT_VRAM_BYTES: Gauge = register_gauge!(opts!(
+            "memory_current_vram_bytes",
+            "Current VRAM usage in bytes."
+        ))
+        .unwrap();
+
+        /// Total bytes allocated on GPU.
+        pub static ref GPU_BYTES_ALLOCATED: Counter = register_counter!(opts!(
+            "memory_gpu_bytes_allocated_total",
+            "Total bytes allocated on GPU."
+        ))
+        .unwrap();
+
+        /// Total bytes deallocated on GPU.
+        pub static ref GPU_BYTES_DEALLOCATED: Counter = register_counter!(opts!(
+            "memory_gpu_bytes_deallocated_total",
+            "Total bytes deallocated on GPU."
+        ))
+        .unwrap();
+    }
+
+    /// Update VRAM usage metrics.
+    pub fn update_vram(current_bytes: f64, peak_bytes: f64) {
+        CURRENT_VRAM_BYTES.set(current_bytes);
+        let current_peak = PEAK_VRAM_BYTES.get();
+        if peak_bytes > current_peak {
+            PEAK_VRAM_BYTES.set(peak_bytes);
+        }
+    }
+}
+
+/// Pipeline efficiency metrics.
+pub mod pipeline {
+    use super::*;
+    lazy_static! {
+        /// Total pipeline stall events.
+        pub static ref STALLS: IntCounter =
+            register_int_counter!("pipeline_stalls_total", "Total pipeline stall events.")
+                .unwrap();
+
+        /// Mimi/LM overlap efficiency ratio (0-1).
+        pub static ref OVERLAP_EFFICIENCY: Histogram = register_histogram!(histogram_opts!(
+            "pipeline_overlap_efficiency",
+            "Mimi/LM overlap efficiency ratio.",
+            vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        ))
+        .unwrap();
+
+        /// Pre-processing stage duration.
+        pub static ref PREPROCESS_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "pipeline_preprocess_duration_seconds",
+            "Pre-processing stage duration distribution.",
+            vec![0.001, 0.002, 0.005, 0.010, 0.020, 0.030, 0.050],
+        ))
+        .unwrap();
+
+        /// Post-processing stage duration.
+        pub static ref POSTPROCESS_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "pipeline_postprocess_duration_seconds",
+            "Post-processing stage duration distribution.",
+            vec![0.001, 0.002, 0.005, 0.010, 0.020, 0.030, 0.050],
+        ))
+        .unwrap();
+
+        /// Channel queue depth (pending audio frames).
+        pub static ref CHANNEL_QUEUE_DEPTH: Gauge = register_gauge!(opts!(
+            "pipeline_channel_queue_depth",
+            "Average channel queue depth (pending audio frames)."
+        ))
+        .unwrap();
+
+        /// Batch processing duration.
+        pub static ref BATCH_DURATION: Histogram = register_histogram!(histogram_opts!(
+            "pipeline_batch_duration_seconds",
+            "Full batch processing duration distribution.",
+            vec![0.010, 0.020, 0.030, 0.040, 0.050, 0.060, 0.080, 0.100, 0.150],
+        ))
+        .unwrap();
+    }
+
+    /// Record a pipeline stall event.
+    pub fn record_stall() {
+        STALLS.inc();
+    }
+
+    /// Record overlap efficiency for a batch.
+    pub fn record_overlap(efficiency: f64) {
+        OVERLAP_EFFICIENCY.observe(efficiency);
+    }
+}

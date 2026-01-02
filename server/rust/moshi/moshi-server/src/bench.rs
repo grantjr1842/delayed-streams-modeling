@@ -242,6 +242,43 @@ pub static DECODE_LATENCY: LatencyRecorder = LatencyRecorder::new("decode");
 /// Total request latency (end-to-end)
 pub static REQUEST_LATENCY: LatencyRecorder = LatencyRecorder::new("request");
 
+// ============================================================================
+// Component-Specific Recorders
+// ============================================================================
+
+/// Transformer layer forward pass latency
+pub static TRANSFORMER_LATENCY: LatencyRecorder = LatencyRecorder::new("transformer");
+
+/// Attention computation latency
+pub static ATTENTION_LATENCY: LatencyRecorder = LatencyRecorder::new("attention");
+
+/// KV cache operations latency
+pub static KV_CACHE_LATENCY: LatencyRecorder = LatencyRecorder::new("kv_cache");
+
+/// Full batch processing step latency
+pub static BATCH_PROCESSING_LATENCY: LatencyRecorder = LatencyRecorder::new("batch_processing");
+
+/// Pipeline pre-processing latency
+pub static PREPROCESS_LATENCY: LatencyRecorder = LatencyRecorder::new("preprocess");
+
+/// Pipeline post-processing latency
+pub static POSTPROCESS_LATENCY: LatencyRecorder = LatencyRecorder::new("postprocess");
+
+/// Mimi batch encode latency
+pub static MIMI_BATCH_ENCODE_LATENCY: LatencyRecorder = LatencyRecorder::new("mimi_batch_encode");
+
+/// Mimi batch decode latency
+pub static MIMI_BATCH_DECODE_LATENCY: LatencyRecorder = LatencyRecorder::new("mimi_batch_decode");
+
+/// TTS synthesis latency
+pub static TTS_SYNTHESIS_LATENCY: LatencyRecorder = LatencyRecorder::new("tts_synthesis");
+
+/// TTS vocoder latency
+pub static TTS_VOCODER_LATENCY: LatencyRecorder = LatencyRecorder::new("tts_vocoder");
+
+/// LM token generation latency (per token)
+pub static LM_TOKEN_LATENCY: LatencyRecorder = LatencyRecorder::new("lm_token");
+
 /// Get all latency statistics
 pub fn all_stats() -> Vec<LatencyStats> {
     vec![
@@ -249,6 +286,17 @@ pub fn all_stats() -> Vec<LatencyStats> {
         ENCODE_LATENCY.stats(),
         DECODE_LATENCY.stats(),
         REQUEST_LATENCY.stats(),
+        TRANSFORMER_LATENCY.stats(),
+        ATTENTION_LATENCY.stats(),
+        KV_CACHE_LATENCY.stats(),
+        BATCH_PROCESSING_LATENCY.stats(),
+        PREPROCESS_LATENCY.stats(),
+        POSTPROCESS_LATENCY.stats(),
+        MIMI_BATCH_ENCODE_LATENCY.stats(),
+        MIMI_BATCH_DECODE_LATENCY.stats(),
+        TTS_SYNTHESIS_LATENCY.stats(),
+        TTS_VOCODER_LATENCY.stats(),
+        LM_TOKEN_LATENCY.stats(),
     ]
 }
 
@@ -258,6 +306,17 @@ pub fn reset_all() {
     ENCODE_LATENCY.reset();
     DECODE_LATENCY.reset();
     REQUEST_LATENCY.reset();
+    TRANSFORMER_LATENCY.reset();
+    ATTENTION_LATENCY.reset();
+    KV_CACHE_LATENCY.reset();
+    BATCH_PROCESSING_LATENCY.reset();
+    PREPROCESS_LATENCY.reset();
+    POSTPROCESS_LATENCY.reset();
+    MIMI_BATCH_ENCODE_LATENCY.reset();
+    MIMI_BATCH_DECODE_LATENCY.reset();
+    TTS_SYNTHESIS_LATENCY.reset();
+    TTS_VOCODER_LATENCY.reset();
+    LM_TOKEN_LATENCY.reset();
 }
 
 /// Log all statistics
@@ -267,6 +326,67 @@ pub fn log_stats() {
             tracing::info!("{}", stat);
         }
     }
+}
+
+// ============================================================================
+// CUDA Timing Utilities
+// ============================================================================
+
+/// Execute a function with optional CUDA synchronization for accurate timing.
+/// Returns the result and the elapsed duration.
+///
+/// When `SYNC_CUDA_FOR_TIMING` is enabled, this ensures GPU operations complete
+/// before measuring time, providing more accurate latency measurements at the
+/// cost of some performance overhead.
+#[cfg(feature = "cuda")]
+pub fn with_cuda_sync<F, R>(device: &candle::Device, f: F) -> (R, Duration)
+where
+    F: FnOnce() -> R,
+{
+    if SYNC_CUDA_FOR_TIMING.load(Ordering::Relaxed) {
+        let _ = device.synchronize();
+    }
+    let start = Instant::now();
+    let result = f();
+    if SYNC_CUDA_FOR_TIMING.load(Ordering::Relaxed) {
+        let _ = device.synchronize();
+    }
+    let elapsed = start.elapsed();
+    (result, elapsed)
+}
+
+/// Non-CUDA version - just times the function without synchronization
+#[cfg(not(feature = "cuda"))]
+pub fn with_cuda_sync<F, R>(_device: &(), f: F) -> (R, Duration)
+where
+    F: FnOnce() -> R,
+{
+    let start = Instant::now();
+    let result = f();
+    let elapsed = start.elapsed();
+    (result, elapsed)
+}
+
+/// Time a function and record to a specific recorder
+pub fn timed<F, R>(recorder: &LatencyRecorder, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let start = Instant::now();
+    let result = f();
+    recorder.record(start.elapsed());
+    result
+}
+
+/// Time a function and record to a specific recorder with a Result return type
+pub fn timed_result<F, R, E>(recorder: &LatencyRecorder, f: F) -> Result<R, E>
+where
+    F: FnOnce() -> Result<R, E>,
+{
+    let start = Instant::now();
+    let result = f();
+    recorder.record(start.elapsed());
+    result
 }
 
 // ============================================================================

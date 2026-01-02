@@ -502,7 +502,7 @@ impl StreamingMultiheadAttention {
             let v = v.narrow(2, k_len - k_target_len, k_target_len)?;
             (k, v)
         } else {
-            (k.clone(), v.clone())
+            (k, v)
         };
 
         let xs = if (q.dtype() == DType::BF16 || q.dtype() == DType::F16)

@@ -165,16 +165,16 @@ impl State {
             for (batch_idx, item) in self.batch.iter().enumerate() {
                 if item.is_first_step() {
                     let pad = Tensor::full(item.audio_pad_token, (1, codebooks), &self.device)?;
-                    next_tokens_t = next_tokens_t.slice_assign(&[batch_idx..batch_idx+1], &pad)?;
+                    next_tokens_t = next_tokens_t.slice_assign(&[batch_idx..=batch_idx], &pad)?;
                 }
                 if mask.is_active(batch_idx) {
                     let step_tokens = audio_step_tokens.narrow(0, batch_idx, 1)?;
-                    self.next_codebooks = self.next_codebooks.slice_assign(&[batch_idx..batch_idx+1], &step_tokens)?;
+                    self.next_codebooks = self.next_codebooks.slice_assign(&[batch_idx..=batch_idx], &step_tokens)?;
                 }
             }
 
             let audio_tokens = (0..codebooks)
-                .map(|i| Ok(next_tokens_t.narrow(1, i, 1)?))
+                .map(|i| next_tokens_t.narrow(1, i, 1))
                 .collect::<Result<Vec<_>>>()?;
             let text = self.text_tokens()?;
             f(self.batch.as_slice(), &text, &audio_tokens);

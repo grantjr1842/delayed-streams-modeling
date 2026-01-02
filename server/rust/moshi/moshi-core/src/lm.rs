@@ -511,6 +511,7 @@ struct DepFormerSlice {
 }
 
 impl DepFormerSlice {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         idx: usize,
         num_slices: usize,
@@ -529,8 +530,6 @@ impl DepFormerSlice {
             vb.pp("depformer")
         } else if vb.contains_key("layers.0.norm1.alpha") {
             vb.clone()
-        } else if vb.contains_key(&format!("{idx}.transformer.layers.0.norm1.alpha")) {
-            vb.pp(idx).pp("transformer")
         } else {
             vb.pp(idx).pp("transformer")
         };
@@ -549,7 +548,7 @@ impl DepFormerSlice {
             root_vb.pp("depformer_text_emb")
         } else if root_vb.contains_key(&format!("depformer_emb.{}.weight", idx.saturating_sub(1))) {
              root_vb.pp("depformer_emb").pp(idx.saturating_sub(1))
-        } else if vb.contains_key(&format!("emb.embeddings.weight")) {
+        } else if vb.contains_key("emb.embeddings.weight") {
             vb.pp("emb")
         } else {
             vb.pp(idx).pp("emb")

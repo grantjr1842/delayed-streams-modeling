@@ -1,0 +1,9 @@
+{
+    "id": "hello-world",
+    "turns": [
+        "Testing, 1, 2, 3 testing.  The quick brown fox jumped over the hill."
+    ],
+    "voices": [
+        "expresso/ex03-ex01_happy_001_channel1_334s.wav"
+    ]
+}

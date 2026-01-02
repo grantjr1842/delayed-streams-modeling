@@ -1,11 +1,13 @@
 [package]
-name = "kyutai-stt-client"
+name = "kyutai-client"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [features]
-default = ["mic", "file"]
+default = ["stt", "tts", "mic", "file"]
+stt = []
+tts = []
 mic = ["dep:cpal"]
 file = ["dep:kaudio"]
 hq-resample = ["dep:rubato"]
@@ -21,7 +23,10 @@ url = { workspace = true }
 http = { workspace = true }
 tracing = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+serde_json = { workspace = true }
+kyutai-client-core = { path = "../kyutai-client-core", features = ["ws", "audio"] }
 
 cpal = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
 kaudio = { workspace = true, optional = true }
+ringbuf = { workspace = true, optional = true }

@@ -3399,33 +3399,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyutai-client-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "jsonwebtoken",
- "serde",
- "url",
-]
-
-[[package]]
-name = "kyutai-stt-cli"
+name = "kyutai-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cpal",
+ "futures-util",
+ "hound",
  "kaudio",
+ "kyutai-client",
  "kyutai-client-core",
- "kyutai-stt-client",
+ "log",
+ "ringbuf",
  "rubato 0.16.2",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
-name = "kyutai-stt-client"
+name = "kyutai-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3433,9 +3430,12 @@ dependencies = [
  "futures-util",
  "http 1.4.0",
  "kaudio",
+ "kyutai-client-core",
+ "ringbuf",
  "rmp-serde",
  "rubato 0.16.2",
  "serde",
+ "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tokio-tungstenite",
@@ -3444,20 +3444,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "kyutai-tts-rs"
+name = "kyutai-client-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
+ "chrono",
  "cpal",
  "futures-util",
- "hound",
- "kyutai-client-core",
+ "jsonwebtoken",
  "ringbuf",
  "rmp-serde",
  "rubato 0.16.2",
  "serde",
- "serde_json",
  "tokio",
  "tokio-tungstenite",
  "url",

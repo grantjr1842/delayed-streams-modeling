@@ -175,10 +175,15 @@ impl State {
         let to_penalize = Tensor::from_vec(to_penalize, to_penalize_len, device)?;
         let penalized_logits = logits.index_select(&to_penalize, 0)?;
         let is_pos = penalized_logits.ge(0f32)?;
+
+        let p_pos = 1.0 / penalty;
+        let p_neg = penalty;
+
         let p = is_pos.where_cond(
-            &Tensor::new(1.0 / penalty, device)?.broadcast_as(penalized_logits.shape())?,
-            &Tensor::new(penalty, device)?.broadcast_as(penalized_logits.shape())?,
+            &Tensor::from_slice(&[p_pos], (), device)?.broadcast_as(penalized_logits.shape())?,
+            &Tensor::from_slice(&[p_neg], (), device)?.broadcast_as(penalized_logits.shape())?,
         )?;
+
         let penalized_logits = penalized_logits.broadcast_mul(&p)?;
         let diff = (penalized_logits - logits.index_select(&to_penalize, 0)?)?;
         logits.scatter_add(&to_penalize, &diff, 0)
@@ -220,7 +225,7 @@ impl State {
             } else {
                 Tensor::from_slice(&[t, t], (2, 1), dev)?
             };
-            codes.push(Some(t))
+            codes.push(Some(t));
         }
         let text_token = match text_token {
             Some(text_token) => Some(if batch_size == 1 {

@@ -1,25 +1,17 @@
-use crate::error::{Result, SttError};
-use crate::protocol::{InMsg, OutMsg, decode_out_msg, encode_in_msg, encode_in_msg_into};
-use crate::transcript::TranscriptAssembler;
-use crate::types::{SttEvent, Utterance};
+use crate::stt::error::{Result, SttError};
+use crate::stt::protocol::{InMsg, OutMsg, decode_out_msg, encode_in_msg, encode_in_msg_into};
+use crate::stt::transcript::TranscriptAssembler;
+use crate::stt::types::{SttEvent, Utterance};
 
 use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::SplitStream;
 use std::collections::VecDeque;
 use std::time::Duration;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use url::Url;
-
-type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+use kyutai_client_core::ws::{WsStream, connect_ws, build_ws_url};
 type WsRead = SplitStream<WsStream>;
 
 const SHUTDOWN_FLUSH_MARKER_ID: i64 = i64::MIN + 1;
@@ -64,35 +56,7 @@ fn close_code_message(code: u16, reason: &str) -> String {
     }
 }
 
-async fn connect_ws(
-    url: &str,
-    auth_token: Option<&str>,
-    query_token: Option<&str>,
-) -> Result<WsStream> {
-    let mut url = Url::parse(url).map_err(|e| SttError::Message(e.to_string()))?;
-
-    if let Some(token) = query_token {
-        let mut qp = url.query_pairs_mut();
-        qp.clear().append_pair("token", token);
-    }
-
-    let mut req = url
-        .to_string()
-        .into_client_request()
-        .map_err(|e| SttError::Message(e.to_string()))?;
-
-    if let Some(token) = auth_token {
-        let header_value = HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|e| SttError::Message(e.to_string()))?;
-        req.headers_mut().insert(AUTHORIZATION, header_value);
-    }
-
-    let (ws_stream, _resp) = connect_async(req)
-        .await
-        .map_err(|e| SttError::Message(e.to_string()))?;
-
-    Ok(ws_stream)
-}
+// Replaced by kyutai_client_core::ws::connect_ws
 
 fn spawn_recv_task(
     mut ws_read: WsRead,
@@ -274,7 +238,11 @@ impl SttClientBuilder {
         let max_reconnect_attempts = self.max_reconnect_attempts;
         let reconnect_delay = self.reconnect_delay;
 
-        let ws_stream = connect_ws(&url, auth_token.as_deref(), query_token.as_deref()).await?;
+        let ws_url = build_ws_url(&url, "", &[], query_token.as_deref())
+            .map_err(|e| SttError::Message(e.to_string()))?;
+        let ws_stream = connect_ws(&ws_url, auth_token.as_deref())
+            .await
+            .map_err(|e| SttError::Message(e.to_string()))?;
         let (ws_write, ws_read) = ws_stream.split();
         let (tx, mut rx) = mpsc::channel::<SendCmd>(128);
         let (out_tx, out_rx) = mpsc::channel::<OutMsg>(128);
@@ -342,10 +310,11 @@ impl SttClientBuilder {
 
                                         sleep(reconnect_delay).await;
 
+                                        let ws_url = build_ws_url(&url, "", &[], query_token.as_deref())
+                                            .map_err(|e| SttError::Message(e.to_string()))?;
                                         let ws_stream = match connect_ws(
-                                            &url,
+                                            &ws_url,
                                             auth_token.as_deref(),
-                                            query_token.as_deref(),
                                         )
                                         .await
                                         {
@@ -645,7 +614,7 @@ impl SttEventStream {
         }
     }
 
-    fn push_word_finalized(&mut self, word: crate::types::WordTiming) {
+    fn push_word_finalized(&mut self, word: crate::stt::types::WordTiming) {
         let word_text = word.word.clone();
         self.pending.push_back(SttEvent::WordFinalized(word));
 
@@ -657,7 +626,7 @@ impl SttEventStream {
         let should_emit = self.utterance_partial_min_interval.is_zero()
             || self
                 .last_partial_emit
-                .map_or(true, |last| now.duration_since(last) >= self.utterance_partial_min_interval);
+                .is_none_or(|last| now.duration_since(last) >= self.utterance_partial_min_interval);
         if should_emit {
             self.pending
                 .push_back(SttEvent::UtterancePartial(Utterance {

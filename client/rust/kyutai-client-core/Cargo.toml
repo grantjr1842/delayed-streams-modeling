@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-description = "Shared auth and WebSocket helpers for Kyutai clients"
+description = "Shared auth, WebSocket, and Audio helpers for Kyutai clients"
+
+[features]
+default = []
+ws = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:rmp-serde"]
+audio = ["dep:cpal", "dep:rubato", "dep:ringbuf"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -12,3 +17,11 @@ chrono = { workspace = true }
 jsonwebtoken = { workspace = true }
 serde = { workspace = true }
 url = { workspace = true }
+
+tokio = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"], optional = true }
+futures-util = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+rubato = { workspace = true, optional = true }
+ringbuf = { workspace = true, optional = true }

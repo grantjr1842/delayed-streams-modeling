@@ -1,4 +1,4 @@
-use crate::types::WordTiming;
+use crate::stt::types::WordTiming;
 
 #[derive(Clone, Debug, Default)]
 pub struct TranscriptAssembler {

@@ -19,10 +19,19 @@ pub struct ItemState {
     word_tokens: Vec<u32>,
     unended_word: bool,
     last_stop_time: f64,
-    audio_pad_token: u32,
 }
 
 impl ItemState {
+    pub fn new(text_token: u32) -> Self {
+        Self {
+            step_idx: 0,
+            text_token,
+            word_tokens: vec![],
+            last_stop_time: 0.0,
+            unended_word: false,
+        }
+    }
+
     fn reset(&mut self, text_start_token: u32) {
         self.step_idx = 0;
         self.text_token = text_start_token;
@@ -62,14 +71,7 @@ impl State {
     ) -> Result<Self> {
         let text_token = lm.text_start_token();
         let device = lm.device().clone();
-        let item_state = ItemState {
-            text_token,
-            word_tokens: vec![],
-            unended_word: false,
-            step_idx: 0,
-            last_stop_time: 0.,
-            audio_pad_token: lm.audio_pad_token(),
-        };
+        let item_state = ItemState::new(text_token);
         let next_codebooks = Tensor::full(lm.audio_pad_token(), (batch_size, lm.in_audio_codebooks()), &device)?;
         let mut s = Self {
             asr_delay_in_tokens,
@@ -156,41 +158,48 @@ impl State {
         if batch_size != self.batch_size() {
             candle::bail!("batch size mismatch: {batch_size} != {}", self.batch_size());
         }
+        let dev = self.device().clone();
+        let audio_pad_token = self.lm.audio_pad_token();
         let mut words = vec![];
-        for step in 0..steps {
-            let audio_step_tokens = audio_tokens.narrow(2, step, 1)?.reshape((batch_size, codebooks))?;
-            let mut next_tokens_t = self.next_codebooks.clone();
 
-            // Handle is_first_step and mask
-            for (batch_idx, item) in self.batch.iter().enumerate() {
-                if item.is_first_step() {
-                    let pad = Tensor::full(item.audio_pad_token, (1, codebooks), &self.device)?;
-                    next_tokens_t = next_tokens_t.slice_assign(&[batch_idx..=batch_idx], &pad)?;
-                }
-                if mask.is_active(batch_idx) {
-                    let step_tokens = audio_step_tokens.narrow(0, batch_idx, 1)?;
-                    self.next_codebooks = self.next_codebooks.slice_assign(&[batch_idx..=batch_idx], &step_tokens)?;
-                }
+        let mut is_first_step_vec: Vec<u32> =
+            self.batch.iter().map(|s| s.is_first_step() as u32).collect();
+
+        for step in 0..steps {
+            let audio_step_tokens =
+                audio_tokens.narrow(2, step, 1)?.reshape((batch_size, codebooks))?;
+
+            let is_first_step_t = Tensor::from_vec(is_first_step_vec.clone(), (batch_size, 1), &dev)?
+                .to_dtype(candle::DType::U8)?;
+            let pad_tokens = Tensor::full(audio_pad_token, (batch_size, codebooks), &dev)?;
+            let next_tokens_t = is_first_step_t.where_cond(&pad_tokens, &self.next_codebooks)?;
+
+            if let Some(mask_t) = mask.as_option() {
+                let mask_t = mask_t.to_dtype(candle::DType::U8)?.unsqueeze(1)?;
+                self.next_codebooks =
+                    mask_t.where_cond(&audio_step_tokens, &self.next_codebooks)?;
+            } else {
+                self.next_codebooks = audio_step_tokens;
             }
 
-            let audio_tokens = (0..codebooks)
+            let audio_tokens_vec = (0..codebooks)
                 .map(|i| next_tokens_t.narrow(1, i, 1))
                 .collect::<Result<Vec<_>>>()?;
             let text = self.text_tokens()?;
-            f(self.batch.as_slice(), &text, &audio_tokens);
-            let audio_tokens = audio_tokens.into_iter().map(Some).collect::<Vec<_>>();
+            f(self.batch.as_slice(), &text, &audio_tokens_vec);
+            let audio_tokens_vec = audio_tokens_vec.into_iter().map(Some).collect::<Vec<_>>();
             let (text_logits, transformer_out) =
-                self.lm.forward_cond(Some(text), audio_tokens, conditions, mask)?;
+                self.lm.forward_cond(Some(text), audio_tokens_vec, conditions, mask)?;
             self.model_step_idx += 1;
+
             let extra_heads = self.lm.extra_heads(&transformer_out)?;
             let mut prs = vec![];
-            for extra_head in extra_heads.iter() {
-                // Only retrieve the first element for each extra-head.
-                let prs_ =
-                    candle_nn::ops::softmax_last_dim(&extra_head.to_dtype(candle::DType::F32)?)?
-                        .i((.., 0, 0))?
-                        .to_vec1::<f32>()?;
-                prs.push(prs_);
+            if !extra_heads.is_empty() {
+                let extra_heads = Tensor::stack(&extra_heads, 0)?;
+                let extra_heads =
+                    candle_nn::ops::softmax_last_dim(&extra_heads.to_dtype(candle::DType::F32)?)?;
+                let extra_heads = extra_heads.i((.., .., 0, 0))?;
+                prs = extra_heads.to_vec2::<f32>()?;
             }
             if !prs.is_empty() {
                 words.push(AsrMsg::Step { step_idx: self.model_step_idx(), prs });
@@ -214,6 +223,8 @@ impl State {
                 }
                 item.text_token = text_token;
                 item.step_idx += 1;
+                is_first_step_vec[batch_idx] = 0; // No longer first step
+
                 if item.step_idx >= self.asr_delay_in_tokens {
                     if text_token == 3 || text_token == 0 {
                         if !item.word_tokens.is_empty() {

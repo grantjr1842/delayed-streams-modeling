@@ -290,6 +290,62 @@ pub fn resolve_secret(explicit: Option<&str>, base_dir: &Path, env_name: Option<
     )
 }
 
+pub struct AuthResolver<'a> {
+    pub token: Option<&'a str>,
+    pub secret: Option<&'a str>,
+    pub env_name: Option<&'a str>,
+    pub user_agent: &'a str,
+}
+
+impl<'a> AuthResolver<'a> {
+    pub fn new(user_agent: &'a str) -> Self {
+        Self {
+            token: None,
+            secret: None,
+            env_name: None,
+            user_agent,
+        }
+    }
+
+    pub fn with_token(mut self, token: Option<&'a str>) -> Self {
+        self.token = token;
+        self
+    }
+
+    pub fn with_secret(mut self, secret: Option<&'a str>) -> Self {
+        self.secret = secret;
+        self
+    }
+
+    pub fn with_env(mut self, env_name: Option<&'a str>) -> Self {
+        self.env_name = env_name;
+        self
+    }
+
+    pub fn resolve(&self, auto_token: bool) -> Result<Option<String>> {
+        if let Some(token) = self.token {
+            return Ok(Some(token.to_string()));
+        }
+
+        if let Ok(token) = std::env::var("MOSHI_JWT_TOKEN")
+            && !token.trim().is_empty()
+        {
+            return Ok(Some(token));
+        }
+
+        if auto_token {
+            let base_dir = std::env::current_dir()?;
+            load_better_auth_secret_from_env_files_if_needed(&base_dir)?;
+            let secret = resolve_secret(self.secret, &base_dir, self.env_name)?;
+            let token = generate_token(&secret, 1.0, self.user_agent)
+                .map_err(|e| anyhow::anyhow!("Failed to generate token: {}", e))?;
+            return Ok(Some(token));
+        }
+
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

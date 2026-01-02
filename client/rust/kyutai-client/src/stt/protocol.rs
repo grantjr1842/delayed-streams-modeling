@@ -1,4 +1,4 @@
-use crate::error::{Result, SttError};
+use crate::stt::error::{Result, SttError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -1,168 +1,16 @@
-use crate::audio::{AudioChunk, ResampleQuality};
-use crate::error::{Result, SttError};
+use crate::stt::audio::{AudioChunk, ResampleQuality};
+use crate::stt::error::{Result, SttError};
+use kyutai_client_core::audio::{
+    DynResampler, downmix_f32_to_mono_into, downmix_i16_to_mono_into, downmix_u16_to_mono_into,
+};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
-#[cfg(feature = "hq-resample")]
-use rubato::Resampler;
 use tokio::sync::mpsc;
 use tracing::warn;
 
 const OUTPUT_SAMPLE_RATE_HZ: u32 = 24_000;
 const OUTPUT_CHUNK_SAMPLES: usize = 1920;
-
-struct LinearResampler {
-    in_rate_hz: u32,
-    out_rate_hz: u32,
-    step: f64,
-    pos: f64,
-    buf: Vec<f32>,
-}
-
-impl LinearResampler {
-    fn new(in_rate_hz: u32, out_rate_hz: u32) -> Self {
-        Self {
-            in_rate_hz,
-            out_rate_hz,
-            step: in_rate_hz as f64 / out_rate_hz as f64,
-            pos: 0.0,
-            buf: Vec::new(),
-        }
-    }
-
-    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
-        out.clear();
-        if input.is_empty() {
-            return;
-        }
-
-        self.buf.extend_from_slice(input);
-
-        let approx_out_len = ((input.len() as u64 * self.out_rate_hz as u64)
-            / self.in_rate_hz.max(1) as u64)
-            .saturating_add(2) as usize;
-
-        out.reserve(approx_out_len);
-
-        while self.pos + 1.0 < self.buf.len() as f64 {
-            let i = self.pos.floor() as usize;
-            let frac = self.pos - i as f64;
-
-            let a = self.buf[i];
-            let b = self.buf[i + 1];
-
-            out.push(a + (b - a) * frac as f32);
-            self.pos += self.step;
-        }
-
-        let drain = self.pos.floor() as usize;
-        if drain > 0 {
-            self.buf.drain(0..drain);
-            self.pos -= drain as f64;
-        }
-
-    }
-}
-
-#[cfg(feature = "hq-resample")]
-struct HqResampler {
-    resampler: rubato::FftFixedInOut<f32>,
-    pending: Vec<f32>,
-}
-
-#[cfg(feature = "hq-resample")]
-impl HqResampler {
-    const CHUNK_SIZE: usize = 1024;
-
-    fn new(in_rate_hz: u32, out_rate_hz: u32) -> Result<Self> {
-        let resampler = rubato::FftFixedInOut::<f32>::new(
-            in_rate_hz as usize,
-            out_rate_hz as usize,
-            Self::CHUNK_SIZE,
-            1,
-        )
-        .map_err(|e| SttError::Message(e.to_string()))?;
-
-        Ok(Self {
-            resampler,
-            pending: Vec::new(),
-        })
-    }
-
-    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
-        out.clear();
-        if input.is_empty() {
-            return Ok(());
-        }
-
-        self.pending.extend_from_slice(input);
-        let chunk_size = self.resampler.input_frames_next();
-        if chunk_size == 0 {
-            return Ok(());
-        }
-
-        while self.pending.len() >= chunk_size {
-            let chunk = &self.pending[..chunk_size];
-            let resampled = self
-                .resampler
-                .process(&[chunk], None)
-                .map_err(|e| SttError::Message(e.to_string()))?;
-            if let Some(channel) = resampled.get(0) {
-                out.extend_from_slice(channel);
-            }
-            self.pending.drain(..chunk_size);
-        }
-
-        Ok(())
-    }
-}
-
-enum MicResampler {
-    Linear(LinearResampler),
-    #[cfg(feature = "hq-resample")]
-    High(HqResampler),
-}
-
-impl MicResampler {
-    fn new(in_rate_hz: u32, out_rate_hz: u32, quality: ResampleQuality) -> Result<Option<Self>> {
-        if in_rate_hz == out_rate_hz {
-            return Ok(None);
-        }
-
-        match quality {
-            ResampleQuality::Linear => Ok(Some(Self::Linear(LinearResampler::new(
-                in_rate_hz,
-                out_rate_hz,
-            )))),
-            ResampleQuality::High => {
-                #[cfg(feature = "hq-resample")]
-                {
-                    Ok(Some(Self::High(HqResampler::new(
-                        in_rate_hz,
-                        out_rate_hz,
-                    )?)))
-                }
-                #[cfg(not(feature = "hq-resample"))]
-                {
-                    Err(SttError::Message(
-                        "hq-resample feature is not enabled".to_string(),
-                    ))
-                }
-            }
-        }
-    }
-
-    fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<()> {
-        match self {
-            MicResampler::Linear(resampler) => {
-                resampler.process_into(input, out);
-                Ok(())
-            }
-            #[cfg(feature = "hq-resample")]
-            MicResampler::High(resampler) => resampler.process_into(input, out),
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct MicCaptureConfig {
@@ -273,7 +121,8 @@ fn build_stream_f32(
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
     let mut resampler =
-        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
+        DynResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)
+            .map_err(|e| SttError::Message(e.to_string()))?;
     let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
     let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
     let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
@@ -320,7 +169,7 @@ fn build_stream_f32(
                     }
                 }
 
-                if pending_read_idx > 0 && pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
+                if pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
                     pending.drain(..pending_read_idx);
                     pending_read_idx = 0;
                 }
@@ -343,7 +192,8 @@ fn build_stream_i16(
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
     let mut resampler =
-        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
+        DynResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)
+            .map_err(|e| SttError::Message(e.to_string()))?;
     let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
     let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
     let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
@@ -390,7 +240,7 @@ fn build_stream_i16(
                     }
                 }
 
-                if pending_read_idx > 0 && pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
+                if pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
                     pending.drain(..pending_read_idx);
                     pending_read_idx = 0;
                 }
@@ -413,7 +263,8 @@ fn build_stream_u16(
 ) -> Result<cpal::Stream> {
     let channels_usize = usize::from(channels);
     let mut resampler =
-        MicResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)?;
+        DynResampler::new(input_sample_rate_hz, OUTPUT_SAMPLE_RATE_HZ, resample_quality)
+            .map_err(|e| SttError::Message(e.to_string()))?;
     let mut mono_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * channels_usize);
     let mut resample_buf = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES);
     let mut pending = Vec::<f32>::with_capacity(OUTPUT_CHUNK_SAMPLES * 4);
@@ -460,7 +311,7 @@ fn build_stream_u16(
                     }
                 }
 
-                if pending_read_idx > 0 && pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
+                if pending_read_idx >= OUTPUT_CHUNK_SAMPLES * 4 {
                     pending.drain(..pending_read_idx);
                     pending_read_idx = 0;
                 }
@@ -471,70 +322,4 @@ fn build_stream_u16(
             None,
         )
         .map_err(|e| SttError::Message(e.to_string()))
-}
-
-fn downmix_f32_to_mono_into(data: &[f32], channels: usize, out: &mut Vec<f32>) {
-    out.clear();
-    if channels <= 1 {
-        out.extend_from_slice(data);
-        return;
-    }
-
-    let frames = data.len() / channels;
-    out.reserve(frames);
-
-    for frame_idx in 0..frames {
-        let mut sum = 0.0;
-        let base = frame_idx * channels;
-        for ch in 0..channels {
-            sum += data[base + ch];
-        }
-        out.push(sum / channels as f32);
-    }
-}
-
-fn downmix_i16_to_mono_into(data: &[i16], channels: usize, out: &mut Vec<f32>) {
-    out.clear();
-    if channels <= 1 {
-        out.reserve(data.len());
-        for &sample in data {
-            out.push(sample as f32 / 32768.0);
-        }
-        return;
-    }
-
-    let frames = data.len() / channels;
-    out.reserve(frames);
-
-    for frame_idx in 0..frames {
-        let mut sum = 0.0;
-        let base = frame_idx * channels;
-        for ch in 0..channels {
-            sum += data[base + ch] as f32 / 32768.0;
-        }
-        out.push(sum / channels as f32);
-    }
-}
-
-fn downmix_u16_to_mono_into(data: &[u16], channels: usize, out: &mut Vec<f32>) {
-    out.clear();
-    if channels <= 1 {
-        out.reserve(data.len());
-        for &sample in data {
-            out.push((sample as f32 - 32768.0) / 32768.0);
-        }
-        return;
-    }
-
-    let frames = data.len() / channels;
-    out.reserve(frames);
-
-    for frame_idx in 0..frames {
-        let mut sum = 0.0;
-        let base = frame_idx * channels;
-        for ch in 0..channels {
-            sum += (data[base + ch] as f32 - 32768.0) / 32768.0;
-        }
-        out.push(sum / channels as f32);
-    }
 }

@@ -660,7 +660,7 @@ impl DepFormer {
             let xs = slice.linear_in.forward(xs)?;
             let xs = match last_token {
                 Some(last_token) => {
-                    let token_id = Tensor::from_vec(vec![last_token], (1, 1), dev)?;
+                    let token_id = Tensor::from_slice(&[last_token], (1, 1), dev)?;
                     let token_emb = slice.emb.forward(&token_id)?;
                     xs.broadcast_add(&token_emb)?
                 }

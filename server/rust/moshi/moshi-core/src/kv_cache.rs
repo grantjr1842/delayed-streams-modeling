@@ -134,11 +134,10 @@ impl ScatteredCacheBuilder {
             let indices = Tensor::from_vec(cache_indices, (b, 1), &self.device)?;
             let arange = Tensor::arange(0u32, context as u32, &self.device)?.unsqueeze(0)?;
             let start_pos_t = Tensor::from_vec(start_positions, (b, 1), &self.device)?;
-            let mask_bool = arange.broadcast_gt(&start_pos_t)?;
-            let mask = mask_bool.to_dtype(self.dtype)?;
-            let negative_inf = Tensor::full(f32::NEG_INFINITY, mask.shape(), &self.device)?.to_dtype(self.dtype)?;
-            let mask = mask.where_cond(&negative_inf, &Tensor::zeros(mask.shape(), self.dtype, &self.device)?)?;
-            let mask = mask.unsqueeze(1)?.unsqueeze(1)?;
+            let mask_bool = arange.broadcast_gt(&start_pos_t)?.unsqueeze(1)?.unsqueeze(1)?;
+            let negative_inf = Tensor::full(f32::NEG_INFINITY, mask_bool.shape(), &self.device)?.to_dtype(self.dtype)?;
+            let zero = Tensor::zeros(mask_bool.shape(), self.dtype, &self.device)?;
+            let mask = mask_bool.where_cond(&negative_inf, &zero)?;
             return Ok(IndicesAndMask { indices, mask });
         }
 

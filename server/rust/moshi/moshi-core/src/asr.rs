@@ -165,26 +165,23 @@ impl State {
         }
         let mut words = vec![];
         for step in 0..steps {
-            let audio_tokens = audio_tokens.narrow(2, step, 1)?;
-            let audio_tokens = audio_tokens.reshape((batch_size, codebooks))?.to_vec2::<u32>()?;
+            let audio_tokens_cpu = audio_tokens.narrow(2, step, 1)?
+                .reshape((batch_size, codebooks))?
+                .to_vec2::<u32>()?;
+            let mut next_tokens_cpu = vec![0u32; batch_size * codebooks];
+            for batch_idx in 0..batch_size {
+                for codebook_idx in 0..codebooks {
+                    let token = if !mask.is_active(batch_idx) {
+                        0
+                    } else {
+                        self.batch[batch_idx].next_token(codebook_idx, audio_tokens_cpu[batch_idx][codebook_idx])
+                    };
+                    next_tokens_cpu[batch_idx * codebooks + codebook_idx] = token;
+                }
+            }
+            let next_tokens_t = Tensor::from_vec(next_tokens_cpu, (batch_size, codebooks), &self.device)?;
             let audio_tokens = (0..codebooks)
-                .map(|codebook_idx| {
-                    let audio_tokens = audio_tokens
-                        .iter()
-                        .zip(self.batch.iter_mut())
-                        .enumerate()
-                        .map(|(batch_idx, (audio_token, item))| {
-                            if !mask.is_active(batch_idx) {
-                                0
-                            } else {
-                                item.next_token(codebook_idx, audio_token[codebook_idx])
-                            }
-                        })
-                        .collect();
-                    let audio_tokens =
-                        Tensor::from_vec(audio_tokens, (batch_size, 1), self.device())?;
-                    Ok(audio_tokens)
-                })
+                .map(|i| Ok(next_tokens_t.narrow(1, i, 1)?))
                 .collect::<Result<Vec<_>>>()?;
             let text = self.text_tokens()?;
             f(self.batch.as_slice(), &text, &audio_tokens);

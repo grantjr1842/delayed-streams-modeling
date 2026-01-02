@@ -109,12 +109,12 @@ impl ScatteredCacheBuilder {
         if seq_len == 1 {
             let b = self.batch_size();
             let mut cache_indices = Vec::with_capacity(b);
-            let mut attention_masks = Vec::with_capacity(b * context);
+            let mut start_positions = Vec::with_capacity(b);
 
             for (batch_i, &active) in batch_mask.iter().enumerate() {
                 if !active {
                     cache_indices.push(self.indices[batch_i] as u32);
-                    attention_masks.extend(std::iter::repeat(0.0).take(context));
+                    start_positions.push(u32::MAX);
                 } else {
                     let index = self.indices[batch_i];
                     let start_pos = self.positions[batch_i];
@@ -127,22 +127,17 @@ impl ScatteredCacheBuilder {
                         self.indices[batch_i] = 0;
                     }
                     self.positions[batch_i] += 1;
-
-                    // Generate mask
-                    if start_pos < context {
-                        let zeros = start_pos + 1;
-                        attention_masks.extend(std::iter::repeat(0.0).take(zeros));
-                        attention_masks
-                            .extend(std::iter::repeat(f32::NEG_INFINITY).take(context - zeros));
-                    } else {
-                        attention_masks.extend(std::iter::repeat(0.0).take(context));
-                    }
+                    start_positions.push(start_pos as u32);
                 }
             }
 
             let indices = Tensor::from_vec(cache_indices, (b, 1), &self.device)?;
-            let mask = Tensor::from_vec(attention_masks, (b, 1, 1, context), &self.device)?
-                .to_dtype(self.dtype)?;
+            let arange = Tensor::arange(0u32, context as u32, &self.device)?.unsqueeze(0)?;
+            let start_pos_t = Tensor::from_vec(start_positions, (b, 1), &self.device)?;
+            let mask_bool = arange.broadcast_gt(&start_pos_t)?.unsqueeze(1)?.unsqueeze(1)?;
+            let negative_inf = Tensor::full(f32::NEG_INFINITY, mask_bool.shape(), &self.device)?.to_dtype(self.dtype)?;
+            let zero = Tensor::zeros(mask_bool.shape(), self.dtype, &self.device)?;
+            let mask = mask_bool.where_cond(&negative_inf, &zero)?;
             return Ok(IndicesAndMask { indices, mask });
         }
 

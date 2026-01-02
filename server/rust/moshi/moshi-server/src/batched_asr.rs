@@ -80,7 +80,14 @@ impl Channel {
     fn new(in_rx: InRecv, out_tx: OutSend) -> Result<Self> {
         metrics::OPEN_CHANNELS.inc();
         let decoder = kaudio::ogg_opus::Decoder::new(24000, FRAME_SIZE)?;
-        Ok(Self { id: ChannelId::new(), in_rx, out_tx, data: VecDeque::new(), decoder, steps: 0 })
+        Ok(Self {
+            id: ChannelId::new(),
+            in_rx,
+            out_tx,
+            data: VecDeque::new(),
+            decoder,
+            steps: 0,
+        })
     }
 
     fn extend_data(&mut self, pcm: &[f32], out_pcm: &mut [f32]) -> bool {
@@ -211,6 +218,8 @@ impl Logger {
 
 struct BatchedAsrInner {
     channels: Channels,
+    active_indices: Arc<Mutex<VecDeque<usize>>>,
+    free_indices: Arc<Mutex<VecDeque<usize>>>,
     asr_delay_in_tokens: usize,
     temperature: f64,
     lm: moshi::lm::LmModel,
@@ -302,14 +311,17 @@ impl BatchedAsrInner {
         #[cfg(not(feature = "cuda"))]
         let mut pinned_batch_pcm: Option<Vec<f32>> = None;
 
+        let mut new_markers = Vec::new();
+        let mut resets = Vec::new();
+
         let _encoder_handle = crate::utils::spawn_blocking("encoder_loop", move || {
             let mut step_idx = 0;
             let mut batch_pcm_vec = vec![0f32; FRAME_SIZE * batch_size];
             let mut channel_ids = vec![None; batch_size];
             let mut mask = vec![false; batch_size];
             loop {
-                let mut new_markers = Vec::new();
-                let mut resets = Vec::new();
+                new_markers.clear();
+                resets.clear();
 
                 #[cfg(feature = "cuda")]
                 let batch_pcm: &mut [f32] = if let Some(p) = pinned_batch_pcm.as_mut() {
@@ -357,8 +369,8 @@ impl BatchedAsrInner {
                                 audio_tokens,
                                 mask: mask_obj,
                                 channel_ids: channel_ids.clone(),
-                                new_markers,
-                                resets,
+                                new_markers: new_markers.clone(),
+                                resets: resets.clone(),
                                 has_data: true,
                             })
                             .is_err()
@@ -376,8 +388,8 @@ impl BatchedAsrInner {
                                 audio_tokens: empty_tokens,
                                 mask: mask_obj,
                                 channel_ids: channel_ids.clone(),
-                                new_markers,
-                                resets,
+                                new_markers: new_markers.clone(),
+                                resets: resets.clone(),
                                 has_data: false,
                             })
                             .is_err()
@@ -530,42 +542,57 @@ impl BatchedAsrInner {
         mask.fill(false);
         channel_ids.fill(None);
 
-        let todo = batch_pcm
+        let active_indices: Vec<usize> = {
+            let guard = self.active_indices.lock().unwrap();
+            guard.iter().copied().collect()
+        };
+
+        if active_indices.is_empty() {
+            return;
+        }
+
+
+        let active_set: std::collections::HashSet<usize> = active_indices.iter().copied().collect();
+
+        let todo: Vec<(usize, bool, Option<ChannelId>, Vec<PipelineEvent>)> = batch_pcm
             .par_chunks_mut(FRAME_SIZE)
-            .zip(self.channels.par_iter())
-            .zip(mask.par_iter_mut())
-            .zip(channel_ids.par_iter_mut())
             .enumerate()
-            .flat_map(|(bid, (((out_pcm, channel_mutex), mask), channel_id_out))| -> Option<PipelineEvent> {
+            .filter(|(bid, _)| active_set.contains(bid))
+            .map(|(bid, out_pcm)| {
                 out_pcm.fill(0.0);
-                let mut guard = channel_mutex.lock().unwrap();
+                let mut guard = self.channels[bid].lock().unwrap();
                 let channel = &mut *guard;
-                let c = channel.as_mut()?;
-                *channel_id_out = Some(c.id);
+                let c = match channel.as_mut() {
+                    Some(c) => c,
+                    None => return (bid, false, None, vec![]),
+                };
 
                 if c.out_tx.is_closed() {
-                    *channel = None;
-                    None
-                } else {
-                    use std::sync::mpsc::TryRecvError;
+                    return (bid, false, Some(c.id), vec![PipelineEvent::Reset(usize::MAX)]);
+                }
+
+                let mut events = Vec::new();
+                let mut mask_val = false;
+                use std::sync::mpsc::TryRecvError;
+                loop {
                     match c.in_rx.try_recv() {
                         Ok(InMsg::Init) => {
                             if c.out_tx.send(OutMsg::Ready).is_err() {
-                                *channel = None;
+                                events.push(PipelineEvent::Reset(usize::MAX));
+                                break;
                             }
-                            Some(PipelineEvent::Reset(bid))
+                            events.push(PipelineEvent::Reset(bid));
                         }
                         Ok(InMsg::Marker { id }) => {
                             tracing::info!(bid, id, "received marker");
                             let current_data = c.data.len() / FRAME_SIZE;
                             let marker_step_idx = step_idx + asr_delay_in_tokens + current_data;
-                            let marker = Marker {
+                            events.push(PipelineEvent::Marker(Marker {
                                 channel_id: c.id,
                                 batch_idx: bid,
                                 step_idx: marker_step_idx,
                                 marker_id: id,
-                            };
-                            Some(PipelineEvent::Marker(marker))
+                            }));
                         }
                         Ok(InMsg::OggOpus { data }) => {
                             match c.decoder.decode(&data) {
@@ -574,39 +601,64 @@ impl BatchedAsrInner {
                                 Ok(Some(pcm)) => {
                                     out_pcm.copy_from_slice(pcm);
                                     c.steps += 1;
-                                    *mask = true;
+                                    mask_val = true;
                                 }
                             }
-                            None
                         }
                         Ok(InMsg::Audio { pcm }) => {
                             if c.extend_data(&pcm, out_pcm) {
                                 c.steps += 1;
-                                *mask = true;
+                                mask_val = true;
                             }
-                            None
                         }
-                        Ok(InMsg::Ping) => None,
+                        Ok(InMsg::Ping) => {}
                         Err(TryRecvError::Empty) => {
                             if c.extend_data(&[], out_pcm) {
                                 c.steps += 1;
-                                *mask = true;
+                                mask_val = true;
                             }
-                            None
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => {
-                            *channel = None;
-                            None
+                            events.push(PipelineEvent::Reset(usize::MAX));
+                            break;
                         }
                     }
                 }
+                (bid, mask_val, Some(c.id), events)
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        for t in todo {
-            match t {
-                PipelineEvent::Reset(bid) => resets.push(bid),
-                PipelineEvent::Marker(m) => new_markers.push(m),
+        for (bid, mask_val, cid, events) in todo {
+            channel_ids[bid] = cid;
+            mask[bid] = mask_val;
+            for event in events {
+                match event {
+                    PipelineEvent::Reset(usize::MAX) => {}
+                    PipelineEvent::Reset(bid) => resets.push(bid),
+                    PipelineEvent::Marker(m) => new_markers.push(m),
+                }
+            }
+        }
+
+        // Clean up closed channels
+        let mut active_guard = self.active_indices.lock().unwrap();
+        let mut free_guard = self.free_indices.lock().unwrap();
+
+        let mut i = 0;
+        while i < active_guard.len() {
+            let bid = active_guard[i];
+            let mut guard = self.channels[bid].lock().unwrap();
+            let should_remove = match guard.as_ref() {
+                Some(c) => c.out_tx.is_closed(),
+                None => true,
+            };
+            if should_remove {
+                *guard = None;
+                active_guard.remove(i);
+                free_guard.push_back(bid);
+            } else {
+                i += 1;
             }
         }
     }
@@ -680,6 +732,8 @@ type Channels = Arc<Vec<Mutex<Option<Channel>>>>;
 
 pub struct BatchedAsr {
     channels: Channels,
+    active_indices: Arc<Mutex<VecDeque<usize>>>,
+    free_indices: Arc<Mutex<VecDeque<usize>>>,
     config: crate::AsrConfig,
     batch_size: usize,
 }
@@ -717,6 +771,9 @@ impl BatchedAsr {
             .with_context(|| asr.text_tokenizer_file.clone())?;
         let channels = (0..batch_size).map(|_| Mutex::new(None)).collect::<Vec<_>>();
         let channels = Arc::new(channels);
+        let free_indices = Arc::new(Mutex::new((0..batch_size).collect::<VecDeque<_>>()));
+        let active_indices = Arc::new(Mutex::new(VecDeque::with_capacity(batch_size)));
+
         let asr_delay_in_tokens =
             asr.conditioning_delay.map_or(asr.asr_delay_in_tokens, |v| (v * 12.5) as usize + 1);
         let batched_asr = BatchedAsrInner {
@@ -726,6 +783,8 @@ impl BatchedAsr {
             audio_tokenizer,
             text_tokenizer: text_tokenizer.into(),
             channels: channels.clone(),
+            active_indices: active_indices.clone(),
+            free_indices: free_indices.clone(),
         };
         let logger = match asr.log_frequency_s {
             Some(s) => Some(Logger::new(&config.instance_name, &config.log_dir, s)?),
@@ -741,20 +800,20 @@ impl BatchedAsr {
         if let Some(logger) = logger {
             logger.log_loop()
         }
-        Ok(Self { channels, config: asr.clone(), batch_size })
+        Ok(Self { channels, active_indices, free_indices, config: asr.clone(), batch_size })
     }
 
     fn channels(&self) -> Result<Option<(usize, InSend, OutRecv)>> {
-        // Linear scan to find an available channel.
-        for (batch_idx, channel) in self.channels.iter().enumerate() {
-            let mut guard = channel.lock().unwrap();
-            if guard.is_none() {
-                let (in_tx, in_rx) = std::sync::mpsc::channel::<InMsg>();
-                let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<OutMsg>();
-                let c = Channel::new(in_rx, out_tx)?;
-                *guard = Some(c);
-                return Ok(Some((batch_idx, in_tx, out_rx)));
-            }
+        let mut free_guard = self.free_indices.lock().unwrap();
+        if let Some(batch_idx) = free_guard.pop_front() {
+            let mut guard = self.channels[batch_idx].lock().unwrap();
+            let (in_tx, in_rx) = std::sync::mpsc::channel::<InMsg>();
+            let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<OutMsg>();
+            let c = Channel::new(in_rx, out_tx)?;
+            *guard = Some(c);
+            let mut active_guard = self.active_indices.lock().unwrap();
+            active_guard.push_back(batch_idx);
+            return Ok(Some((batch_idx, in_tx, out_rx)));
         }
         Ok(None)
     }

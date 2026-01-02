@@ -42,7 +42,7 @@ pub struct BenchmarkArgs {
     #[clap(short = 'n', long, default_value_t = 200)]
     steps: usize,
 
-    #[clap(short = 'n', long, default_value_t = 1)]
+    #[clap(short = 'r', long, default_value_t = 1)]
     reps: usize,
 
     #[clap(short = 's', long)]

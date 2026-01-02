@@ -35,7 +35,7 @@ impl ScatteredKvCache {
             return Ok((k.clone(), v.clone()));
         }
         let indices = iam.indices.unsqueeze(2)?.unsqueeze(1)?;
-        let indices = indices.broadcast_as(k.shape())?.contiguous()?;
+        let indices = indices.broadcast_as(k.shape())?;
         self.k.scatter_set(&indices, k, 2)?;
         self.v.scatter_set(&indices, v, 2)?;
         Ok((self.k.clone(), self.v.clone()))

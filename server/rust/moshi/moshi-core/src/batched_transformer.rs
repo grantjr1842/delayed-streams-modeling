@@ -82,9 +82,9 @@ impl StreamingMultiheadAttention {
         let v = qkv.i((.., .., 2))?;
         // qk_layer_norm = None
         // kv_repeat = 1, otherwise we would need repeat_kv
-        let mut q = q.transpose(1, 2)?.contiguous()?; // b,h,t,d
-        let mut k = k.transpose(1, 2)?.contiguous()?; // b,h,k,d
-        let v = v.transpose(1, 2)?.contiguous()?; // b,h,k,d
+        let mut q = q.transpose(1, 2)?; // b,h,t,d
+        let mut k = k.transpose(1, 2)?; // b,h,k,d
+        let v = v.transpose(1, 2)?; // b,h,k,d
         if let Some(rope) = rope.as_ref() {
             q = rope.apply_rotary_emb(&q)?;
             k = rope.apply_rotary_emb(&k)?;
@@ -105,6 +105,9 @@ impl StreamingMultiheadAttention {
         };
 
         let xs = {
+            let q = q.contiguous()?;
+            let k = k.contiguous()?;
+            let v = v.contiguous()?;
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
             let pre_ws = (pre_ws * (head_dim as f64).powf(-0.5))?;
             let pre_ws = pre_ws.broadcast_add(iam.mask())?;

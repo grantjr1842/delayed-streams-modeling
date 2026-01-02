@@ -47,6 +47,7 @@ jsonwebtoken = { version = "10.2", features = ["rust_crypto"] }
 kaudio = "0.2.1"
 lazy_static = "1.5.0"
 log = "0.4.29"
+mimalloc = "0.1"
 moshi = { path = "./moshi-core", version = "0.6.4" }
 native-tls = "0.2.14"
 nvml-wrapper = "0.11.0"

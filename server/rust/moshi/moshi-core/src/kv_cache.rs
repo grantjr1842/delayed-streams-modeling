@@ -59,13 +59,15 @@ pub struct ScatteredCacheBuilder {
     indices: Vec<usize>,
     dtype: DType,
     device: Device,
+    arange: Tensor,
 }
 
 impl ScatteredCacheBuilder {
     pub fn new(batch_size: usize, context: usize, dtype: DType, device: &Device) -> Result<Self> {
         let positions = vec![0; batch_size];
         let indices = vec![0; batch_size];
-        Ok(Self { positions, indices, context, dtype, device: device.clone() })
+        let arange = Tensor::arange(0u32, context as u32, device)?.unsqueeze(0)?;
+        Ok(Self { positions, indices, context, dtype, device: device.clone(), arange })
     }
 
     pub fn make_cache(&self, num_heads: usize, head_dim: usize) -> Result<ScatteredKvCache> {
@@ -132,11 +134,12 @@ impl ScatteredCacheBuilder {
             }
 
             let indices = Tensor::from_vec(cache_indices, (b, 1), &self.device)?;
-            let arange = Tensor::arange(0u32, context as u32, &self.device)?.unsqueeze(0)?;
             let start_pos_t = Tensor::from_vec(start_positions, (b, 1), &self.device)?;
-            let mask_bool = arange.broadcast_gt(&start_pos_t)?.unsqueeze(1)?.unsqueeze(1)?;
-            let negative_inf = Tensor::full(f32::NEG_INFINITY, mask_bool.shape(), &self.device)?.to_dtype(self.dtype)?;
-            let zero = Tensor::zeros(mask_bool.shape(), self.dtype, &self.device)?;
+            let mask_bool = self.arange.broadcast_gt(&start_pos_t)?.unsqueeze(1)?.unsqueeze(1)?;
+            let negative_inf = Tensor::new(f32::NEG_INFINITY, &self.device)?.to_dtype(self.dtype)?
+                .broadcast_as(mask_bool.shape())?;
+            let zero = Tensor::new(0.0f32, &self.device)?.to_dtype(self.dtype)?
+                .broadcast_as(mask_bool.shape())?;
             let mask = mask_bool.where_cond(&negative_inf, &zero)?;
             return Ok(IndicesAndMask { indices, mask });
         }

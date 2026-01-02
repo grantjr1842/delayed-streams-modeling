@@ -504,8 +504,8 @@ impl BatchedAsrInner {
                     {
                         break;
                     }
-                } else if !new_markers.is_empty() {
-                    if post_tx
+                } else if !new_markers.is_empty()
+                    && post_tx
                         .send(PostProcessMsg {
                             asr_msgs: vec![],
                             step_idx,
@@ -514,9 +514,8 @@ impl BatchedAsrInner {
                             channel_ids,
                         })
                         .is_err()
-                    {
-                        break;
-                    }
+                {
+                    break;
                 }
             }
             Ok(())
@@ -524,6 +523,7 @@ impl BatchedAsrInner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pre_process_pipelined(
         &self,
         asr_delay_in_tokens: usize,

@@ -109,8 +109,7 @@ impl ServerBanner {
 
     /// Print a horizontal divider
     pub fn print_divider(&self) {
-        let line: String = std::iter::repeat(chars::HORIZONTAL)
-            .take(self.box_width)
+        let line: String = std::iter::repeat_n(chars::HORIZONTAL, self.box_width)
             .collect();
         if self.use_color {
             println!("{}", line.dimmed());
@@ -126,11 +125,11 @@ impl ServerBanner {
         let right_pad = padding - left_pad;
 
         let top: String = format!(
-            "{}{}{}{}{}",
+            "{}{} {} {}{}",
             chars::TOP_LEFT,
-            std::iter::repeat(chars::HORIZONTAL).take(left_pad + 1).collect::<String>(),
-            format!(" {} ", title),
-            std::iter::repeat(chars::HORIZONTAL).take(right_pad + 1).collect::<String>(),
+            std::iter::repeat_n(chars::HORIZONTAL, left_pad + 1).collect::<String>(),
+            title,
+            std::iter::repeat_n(chars::HORIZONTAL, right_pad + 1).collect::<String>(),
             chars::TOP_RIGHT,
         );
 
@@ -198,8 +197,7 @@ impl ServerBanner {
 
     /// Print a boxed separator
     pub fn print_box_separator(&self) {
-        let inner: String = std::iter::repeat(chars::HORIZONTAL)
-            .take(self.box_width - 2)
+        let inner: String = std::iter::repeat_n(chars::HORIZONTAL, self.box_width - 2)
             .collect();
         let line = format!("{}{}{}", chars::T_LEFT, inner, chars::T_RIGHT);
 
@@ -212,8 +210,7 @@ impl ServerBanner {
 
     /// Print the box footer
     pub fn print_box_footer(&self) {
-        let inner: String = std::iter::repeat(chars::HORIZONTAL)
-            .take(self.box_width - 2)
+        let inner: String = std::iter::repeat_n(chars::HORIZONTAL, self.box_width - 2)
             .collect();
         let line = format!("{}{}{}", chars::BOTTOM_LEFT, inner, chars::BOTTOM_RIGHT);
 
@@ -483,7 +480,7 @@ impl TableFormatter {
             chars::TOP_LEFT,
             widths
                 .iter()
-                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .map(|w| std::iter::repeat_n(chars::HORIZONTAL, *w + 2).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(&chars::HORIZONTAL.to_string()),
             chars::TOP_RIGHT
@@ -530,7 +527,7 @@ impl TableFormatter {
             chars::T_LEFT,
             widths
                 .iter()
-                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .map(|w| std::iter::repeat_n(chars::HORIZONTAL, *w + 2).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(&chars::HORIZONTAL.to_string()),
             chars::T_RIGHT
@@ -575,7 +572,7 @@ impl TableFormatter {
             chars::BOTTOM_LEFT,
             widths
                 .iter()
-                .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+                .map(|w| std::iter::repeat_n(chars::HORIZONTAL, *w + 2).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(&chars::HORIZONTAL.to_string()),
             chars::BOTTOM_RIGHT

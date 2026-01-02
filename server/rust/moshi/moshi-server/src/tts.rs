@@ -51,17 +51,21 @@ impl DynamicVoiceCache {
     }
 
     fn insert(&mut self, key: String, value: Tensor) {
-        if self.map.contains_key(&key) {
-            self.map.insert(key, value);
-            return;
-        }
-        self.order.push_back(key.clone());
-        self.map.insert(key, value);
-        while self.map.len() > self.max_entries {
-            if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
-            } else {
-                break;
+        use std::collections::hash_map::Entry;
+        match self.map.entry(key) {
+            Entry::Occupied(mut e) => {
+                e.insert(value);
+            }
+            Entry::Vacant(e) => {
+                self.order.push_back(e.key().clone());
+                e.insert(value);
+                while self.map.len() > self.max_entries {
+                    if let Some(old) = self.order.pop_front() {
+                        self.map.remove(&old);
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -712,7 +716,7 @@ impl Model {
                         }
                     };
                     let path = std::fs::canonicalize(voice_dir.join(voice))?;
-                    if !path.starts_with(&voice_dir) {
+                    if !path.starts_with(voice_dir) {
                         tracing::error!(?voice_dir, ?path, "unable to access voice file");
                         anyhow::bail!("unknown voice file '{voice}'")
                     }
@@ -756,7 +760,7 @@ impl Model {
                         }
                     };
                     let path = std::fs::canonicalize(voice_dir.join(voice))?;
-                    if !path.starts_with(&voice_dir) {
+                    if !path.starts_with(voice_dir) {
                         tracing::error!(?voice_dir, ?path, "unable to access voice file");
                         anyhow::bail!("unknown voice file '{voice}'")
                     }

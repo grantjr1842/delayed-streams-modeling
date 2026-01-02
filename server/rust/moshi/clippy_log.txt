@@ -1,0 +1,269 @@
+    Checking moshi-server v0.6.4 (/home/grant/delayed-streams-modeling/server/rust/moshi/moshi-server)
+error: this `impl` can be derived
+   --> moshi-server/src/auth.rs:263:1
+    |
+263 | / impl Default for AuthConfig {
+264 | |     fn default() -> Self {
+265 | |         Self { jwt_secret: None }
+266 | |     }
+267 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#derivable_impls
+    = note: `-D clippy::derivable-impls` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::derivable_impls)]`
+help: replace the manual implementation with a derive attribute
+    |
+258 + #[derive(Default)]
+259 | pub struct AuthConfig {
+    |
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:112:28
+    |
+112 |           let line: String = std::iter::repeat(chars::HORIZONTAL)
+    |  ____________________________^
+113 | |             .take(self.box_width)
+    | |_________________________________^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, self.box_width)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+    = note: `-D clippy::manual-repeat-n` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_repeat_n)]`
+
+error: `format!` in `format!` args
+   --> moshi-server/src/banner.rs:128:27
+    |
+128 |           let top: String = format!(
+    |  ___________________________^
+129 | |             "{}{}{}{}{}",
+130 | |             chars::TOP_LEFT,
+131 | |             std::iter::repeat(chars::HORIZONTAL).take(left_pad + 1).collect::<String>(),
+...   |
+134 | |             chars::TOP_RIGHT,
+135 | |         );
+    | |_________^
+    |
+    = help: combine the `format!(..)` arguments with the outer `format!(..)` call
+    = help: or consider changing `format!` to `format_args!`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#format_in_format_args
+    = note: `-D clippy::format-in-format-args` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::format_in_format_args)]`
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:131:13
+    |
+131 |             std::iter::repeat(chars::HORIZONTAL).take(left_pad + 1).collect::<String>(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, left_pad + 1)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:133:13
+    |
+133 |             std::iter::repeat(chars::HORIZONTAL).take(right_pad + 1).collect::<String>(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, right_pad + 1)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:201:29
+    |
+201 |           let inner: String = std::iter::repeat(chars::HORIZONTAL)
+    |  _____________________________^
+202 | |             .take(self.box_width - 2)
+    | |_____________________________________^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, self.box_width - 2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:215:29
+    |
+215 |           let inner: String = std::iter::repeat(chars::HORIZONTAL)
+    |  _____________________________^
+216 | |             .take(self.box_width - 2)
+    | |_____________________________________^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, self.box_width - 2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:486:26
+    |
+486 |                 .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, *w + 2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:533:26
+    |
+533 |                 .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, *w + 2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `repeat().take()` can be written more concisely
+   --> moshi-server/src/banner.rs:578:26
+    |
+578 |                 .map(|w| std::iter::repeat(chars::HORIZONTAL).take(*w + 2).collect::<String>())
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `repeat_n()` instead: `std::iter::repeat_n(chars::HORIZONTAL, *w + 2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#manual_repeat_n
+
+error: this `if` statement can be collapsed
+   --> moshi-server/src/batched_asr.rs:507:24
+    |
+507 |                   } else if !new_markers.is_empty() {
+    |  ________________________^
+508 | |                     if post_tx
+509 | |                         .send(PostProcessMsg {
+510 | |                             asr_msgs: vec![],
+...   |
+520 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+507 ~                 } else if !new_markers.is_empty()
+508 ~                     && post_tx
+509 |                         .send(PostProcessMsg {
+...
+518 |                         break;
+519 ~                     }
+    |
+
+error: this function has too many arguments (8/7)
+   --> moshi-server/src/batched_asr.rs:527:5
+    |
+527 | /     fn pre_process_pipelined(
+528 | |         &self,
+529 | |         asr_delay_in_tokens: usize,
+530 | |         step_idx: usize,
+...   |
+535 | |         channel_ids: &mut [Option<ChannelId>],
+536 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#too_many_arguments
+    = note: `-D clippy::too-many-arguments` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_arguments)]`
+
+error: methods with the following characteristics: (`to_*` and `self` type is `Copy`) usually take `self` by value
+  --> moshi-server/src/protocol.rs:83:27
+   |
+83 |     pub fn to_close_frame(&self) -> ws::CloseFrame {
+   |                           ^^^^^
+   |
+   = help: consider choosing a less ambiguous name
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#wrong_self_convention
+   = note: `-D clippy::wrong-self-convention` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::wrong_self_convention)]`
+
+error: usage of `contains_key` followed by `insert` on a `HashMap`
+  --> moshi-server/src/tts.rs:54:9
+   |
+54 | /         if self.map.contains_key(&key) {
+55 | |             self.map.insert(key, value);
+56 | |             return;
+57 | |         }
+   | |_________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#map_entry
+   = note: `-D clippy::map-entry` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::map_entry)]`
+help: try
+   |
+54 ~         if let std::collections::hash_map::Entry::Occupied(mut e) = self.map.entry(key) {
+55 +             e.insert(value);
+56 +             return;
+57 +         }
+   |
+
+error: the borrowed expression implements the required traits
+   --> moshi-server/src/tts.rs:715:42
+    |
+715 |                     if !path.starts_with(&voice_dir) {
+    |                                          ^^^^^^^^^^ help: change this to: `voice_dir`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#needless_borrows_for_generic_args
+    = note: `-D clippy::needless-borrows-for-generic-args` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_borrows_for_generic_args)]`
+
+error: the borrowed expression implements the required traits
+   --> moshi-server/src/tts.rs:759:42
+    |
+759 |                     if !path.starts_with(&voice_dir) {
+    |                                          ^^^^^^^^^^ help: change this to: `voice_dir`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#needless_borrows_for_generic_args
+
+error: useless conversion to the same type: `anyhow::Error`
+   --> moshi-server/src/main.rs:469:37
+    |
+469 |                            .map(|_| ())
+    |   _____________________________________^
+    |  |_____________________________________|
+470 | ||                         .map_err(Into::into)
+    | ||____________________________________________^
+471 | |                      })?;
+    | |_____________________- help: consider removing
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#useless_conversion
+    = note: `-D clippy::useless-conversion` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::useless_conversion)]`
+
+error: using `clone` on type `LevelFilter` which implements the `Copy` trait
+   --> moshi-server/src/main.rs:591:26
+    |
+591 |             .with_filter(filter.clone());
+    |                          ^^^^^^^^^^^^^^ help: try removing the `clone` call: `filter`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#clone_on_copy
+    = note: `-D clippy::clone-on-copy` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::clone_on_copy)]`
+
+error: using `clone` on type `LevelFilter` which implements the `Copy` trait
+   --> moshi-server/src/main.rs:605:26
+    |
+605 |             .with_filter(filter.clone());
+    |                          ^^^^^^^^^^^^^^ help: try removing the `clone` call: `filter`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#clone_on_copy
+
+error: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+    --> moshi-server/src/main.rs:1340:9
+     |
+1340 | /         match module {
+1341 | |             Module::BatchedAsr { path, m } => {
+1342 | |                 let t = m.total_slots();
+1343 | |                 let u = m.used_slots();
+...    |
+1354 | |             _ => {}
+1355 | |         }
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#single_match
+     = note: `-D clippy::single-match` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::single_match)]`
+help: try
+     |
+1340 ~         if let Module::BatchedAsr { path, m } = module {
+1341 +             let t = m.total_slots();
+1342 +             let u = m.used_slots();
+1343 +             total_slots += t;
+1344 +             used_slots += u;
+1345 +             modules.push(ModuleCapacity {
+1346 +                 name: path.clone(),
+1347 +                 module_type: "batched_asr",
+1348 +                 total_slots: t,
+1349 +                 used_slots: u,
+1350 +                 available_slots: t.saturating_sub(u),
+1351 +             });
+1352 +         }
+     |
+
+error: could not compile `moshi-server` (bin "moshi-server") due to 20 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `moshi-server` (bin "moshi-server" test) due to 20 previous errors

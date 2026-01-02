@@ -80,7 +80,7 @@ impl CloseCode {
     }
 
     /// Creates a WebSocket CloseFrame with this code and reason
-    pub fn to_close_frame(&self) -> ws::CloseFrame {
+    pub fn to_close_frame(self) -> ws::CloseFrame {
         ws::CloseFrame { code: self.code(), reason: self.reason().into() }
     }
 

@@ -211,7 +211,7 @@ pub struct BetterAuthClaims {
 /// Returns Err with appropriate AuthError for "pending" or "rejected" status.
 pub fn check_approval_status(claims: &BetterAuthClaims) -> Result<(), AuthError> {
     let email = claims.user.email.as_deref();
-    
+
     match claims.user.status.as_deref() {
         // Approved or not set (backwards compatibility with existing JWTs)
         Some("approved") | None => {
@@ -254,16 +254,10 @@ pub fn check_approval_status(claims: &BetterAuthClaims) -> Result<(), AuthError>
 }
 
 /// Authentication configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AuthConfig {
     /// JWT secret for Better Auth validation (from BETTER_AUTH_SECRET env var)
     pub jwt_secret: Option<String>,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self { jwt_secret: None }
-    }
 }
 
 impl AuthConfig {

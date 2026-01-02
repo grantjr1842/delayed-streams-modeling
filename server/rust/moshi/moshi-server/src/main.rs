@@ -467,7 +467,6 @@ impl Module {
                             cfg_alpha: None,
                         })
                         .map(|_| ())
-                        .map_err(Into::into)
                     })?;
                 } else {
                     tracing::info!(path, "skipping tts warmup (no voices configured)");
@@ -588,7 +587,7 @@ fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::Wor
             .with_line_number(true)
             .with_target(true)
             .with_writer(non_blocking_file)
-            .with_filter(filter.clone());
+            .with_filter(filter);
 
         json_layer.boxed()
     } else {
@@ -602,7 +601,7 @@ fn tracing_init(config: LogConfig) -> Result<tracing_appender::non_blocking::Wor
                     .with_ansi(false), // No ANSI escape codes in log files
             )
             .with_writer(non_blocking_file)
-            .with_filter(filter.clone());
+            .with_filter(filter);
 
         text_layer.boxed()
     };
@@ -1337,21 +1336,18 @@ async fn server_status(
     let mut modules = Vec::new();
 
     for module in state.modules.iter() {
-        match module {
-            Module::BatchedAsr { path, m } => {
-                let t = m.total_slots();
-                let u = m.used_slots();
-                total_slots += t;
-                used_slots += u;
-                modules.push(ModuleCapacity {
-                    name: path.clone(),
-                    module_type: "batched_asr",
-                    total_slots: t,
-                    used_slots: u,
-                    available_slots: t.saturating_sub(u),
-                });
-            }
-            _ => {}
+        if let Module::BatchedAsr { path, m } = module {
+            let t = m.total_slots();
+            let u = m.used_slots();
+            total_slots += t;
+            used_slots += u;
+            modules.push(ModuleCapacity {
+                name: path.clone(),
+                module_type: "batched_asr",
+                total_slots: t,
+                used_slots: u,
+                available_slots: t.saturating_sub(u),
+            });
         }
     }
 

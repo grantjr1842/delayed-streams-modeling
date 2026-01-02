@@ -418,7 +418,7 @@ impl StreamingTransformer {
         self.builder.batch_size()
     }
 
-    fn positions(&self) -> &[usize] {
+    fn positions(&self) -> &Tensor {
         self.builder.positions()
     }
 
@@ -441,12 +441,9 @@ impl StreamingTransformer {
         };
         let rope = match self.rope {
             Some(ref rope) => {
-                let pos = self
-                    .positions()
-                    .iter()
-                    .map(|&v| (0..t).map(|j| (v + j) as u32).collect::<Vec<_>>())
-                    .collect::<Vec<_>>();
-                let pos = Tensor::new(pos, xs.device())?;
+                let positions = self.positions().reshape((b, 1))?;
+                let arange = Tensor::arange(0u32, t as u32, xs.device())?.unsqueeze(0)?;
+                let pos = positions.broadcast_add(&arange)?;
                 Some(rope.rope(&pos)?)
             }
             None => None,
@@ -497,14 +494,14 @@ impl StreamingTransformer {
         if batch_idx >= self.batch_size() {
             candle::bail!("batch_idx {batch_idx} is out of bounds for last_reset_pos")
         }
-        self.builder.reset_batch_index(batch_idx);
+        let _ = self.builder.reset_batch_index(batch_idx);
         Ok(())
     }
 }
 
 impl StreamingModule for StreamingTransformer {
     fn reset_state(&mut self) {
-        self.builder.reset();
+        let _ = self.builder.reset();
     }
 
     fn step(&mut self, xs: &StreamTensor, m: &StreamMask) -> Result<StreamTensor> {

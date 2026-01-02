@@ -54,20 +54,21 @@ impl ScatteredKvCache {
 pub struct ScatteredCacheBuilder {
     context: usize,
     // The current position in the stream, this can be larger than context.
-    positions: Vec<usize>,
+    positions: Tensor,
     // The index where the next element will be stored.
-    indices: Vec<usize>,
+    indices: Tensor,
     dtype: DType,
     device: Device,
     arange: Tensor,
     negative_inf: Tensor,
     zero: Tensor,
+    batch_size: usize,
 }
 
 impl ScatteredCacheBuilder {
     pub fn new(batch_size: usize, context: usize, dtype: DType, device: &Device) -> Result<Self> {
-        let positions = vec![0; batch_size];
-        let indices = vec![0; batch_size];
+        let positions = Tensor::zeros((batch_size,), DType::U32, device)?;
+        let indices = Tensor::zeros((batch_size,), DType::U32, device)?;
         let arange = Tensor::arange(0u32, context as u32, device)?.unsqueeze(0)?;
         let negative_inf = Tensor::new(f32::NEG_INFINITY, device)?.to_dtype(dtype)?;
         let zero = Tensor::new(0.0f32, device)?.to_dtype(dtype)?;
@@ -80,6 +81,7 @@ impl ScatteredCacheBuilder {
             arange,
             negative_inf,
             zero,
+            batch_size,
         })
     }
 
@@ -91,25 +93,29 @@ impl ScatteredCacheBuilder {
         Ok(ScatteredKvCache { k, v, context: self.context })
     }
 
-    pub fn positions(&self) -> &[usize] {
+    pub fn positions(&self) -> &Tensor {
         &self.positions
     }
 
-    pub fn reset(&mut self) {
-        self.positions.fill(0);
-        self.indices.fill(0);
+    pub fn reset(&mut self) -> Result<()> {
+        let z = self.positions.zeros_like()?;
+        self.positions = z.clone();
+        self.indices = z;
+        Ok(())
     }
 
     pub fn batch_size(&self) -> usize {
-        self.positions.len()
+        self.batch_size
     }
 
-    pub fn reset_batch_index(&mut self, batch_index: usize) {
-        self.positions[batch_index] = 0;
-        self.indices[batch_index] = 0;
+    pub fn reset_batch_index(&mut self, batch_index: usize) -> Result<()> {
+        use candle::IndexOp;
+        let z = self.positions.i(batch_index)?.zeros_like()?;
+        self.positions.slice_set(&z, 0, batch_index)?;
+        self.indices.slice_set(&z, 0, batch_index)?;
+        Ok(())
     }
 
-    #[allow(clippy::needless_range_loop)]
     pub fn indices_and_mask(
         &mut self,
         seq_len: usize,
@@ -123,31 +129,39 @@ impl ScatteredCacheBuilder {
         // Fast path for seq_len == 1 (common in streaming ASR)
         if seq_len == 1 {
             let b = self.batch_size();
-            let mut cache_indices = Vec::with_capacity(b);
-            let mut start_positions = Vec::with_capacity(b);
+            let active_vec: Vec<u32> = batch_mask.iter().map(|&b| if b { 1 } else { 0 }).collect();
+            let active = Tensor::from_vec(active_vec, (b,), &self.device)?;
+            let zero_u32 = Tensor::new(0u32, &self.device)?.broadcast_as(active.shape())?;
+            let active_mask = active.ne(&zero_u32)?;
 
-            for (batch_i, &active) in batch_mask.iter().enumerate() {
-                if !active {
-                    cache_indices.push(self.indices[batch_i] as u32);
-                    start_positions.push(u32::MAX);
-                } else {
-                    let index = self.indices[batch_i];
-                    let start_pos = self.positions[batch_i];
+            let prev_indices = self.indices.clone();
+            let prev_positions = self.positions.clone();
 
-                    cache_indices.push(index as u32);
+            let one = Tensor::new(1u32, &self.device)?;
+            let next_indices = self.indices.broadcast_add(&one)?;
 
-                    // Update state
-                    self.indices[batch_i] += 1;
-                    if self.indices[batch_i] >= context {
-                        self.indices[batch_i] = 0;
-                    }
-                    self.positions[batch_i] += 1;
-                    start_positions.push(start_pos as u32);
-                }
-            }
+            let context_t = Tensor::new(context as u32, &self.device)?.broadcast_as(active.shape())?;
+            let wrap_mask = next_indices.ge(&context_t)?.to_dtype(DType::U32)?;
+            let sub_val = wrap_mask.broadcast_mul(&context_t)?; // U32 * U32
+            let next_indices = next_indices.broadcast_sub(&sub_val)?;
 
-            let indices = Tensor::from_vec(cache_indices, (b, 1), &self.device)?;
-            let start_pos_t = Tensor::from_vec(start_positions, (b, 1), &self.device)?;
+            let next_positions = self.positions.broadcast_add(&one)?;
+
+            self.indices = active_mask.where_cond(&next_indices, &self.indices)?;
+            self.positions = active_mask.where_cond(&next_positions, &self.positions)?;
+
+            let indices = active_mask.where_cond(&prev_indices, &self.indices)?;
+            let start_pos_t = active_mask.where_cond(&prev_positions, &self.positions)?;
+
+            // If a value is not active, we want the mask to be full zeros so we artifically
+            // change the start_pos to be u32::MAX.
+            let inactive_mask = active.eq(&zero_u32)?;
+            let max_val = Tensor::new(u32::MAX, &self.device)?.broadcast_as(start_pos_t.shape())?;
+            let start_pos_t = inactive_mask.where_cond(&max_val, &start_pos_t)?;
+
+            let indices = indices.unsqueeze(1)?;
+            let start_pos_t = start_pos_t.unsqueeze(1)?;
+
             let mask_bool = self.arange.broadcast_gt(&start_pos_t)?.unsqueeze(1)?.unsqueeze(1)?;
             let negative_inf = self.negative_inf.broadcast_as(mask_bool.shape())?;
             let zero = self.zero.broadcast_as(mask_bool.shape())?;
@@ -166,15 +180,22 @@ impl ScatteredCacheBuilder {
     ) -> Result<IndicesAndMask> {
         let b = self.batch_size();
         let context = self.context;
+        // This is slow as we move back to CPU.
+        let indices_cpu = self.indices.to_vec1::<u32>()?;
+        let positions_cpu = self.positions.to_vec1::<u32>()?;
+
         let mut attention_masks = Vec::with_capacity(b * seq_len * context);
         let mut cache_indices = Vec::with_capacity(b * seq_len);
+        let mut next_indices = indices_cpu.clone();
+        let mut next_positions = positions_cpu.clone();
+
         for (batch_i, &active) in batch_mask.iter().enumerate() {
             if !active {
                 attention_masks.extend(std::iter::repeat_n(0.0, seq_len * context));
-                cache_indices.extend(std::iter::repeat_n(self.indices[batch_i] as u32, seq_len));
+                cache_indices.extend(std::iter::repeat_n(indices_cpu[batch_i], seq_len));
             } else {
-                let start_index = self.indices[batch_i];
-                let start_pos = self.positions[batch_i];
+                let start_index = next_indices[batch_i] as usize;
+                let start_pos = next_positions[batch_i] as usize;
                 let mut all_pos = vec![usize::MAX; context];
                 if start_pos < context {
                     for i in 0..start_pos {
@@ -188,13 +209,13 @@ impl ScatteredCacheBuilder {
                     }
                 }
                 for seq_i in 0..seq_len {
-                    let index = self.indices[batch_i];
+                    let index = next_indices[batch_i] as usize;
                     all_pos[index] = seq_i + start_pos;
                     cache_indices.push(index as u32);
-                    self.indices[batch_i] += 1;
-                    self.positions[batch_i] += 1;
-                    if self.indices[batch_i] >= context {
-                        self.indices[batch_i] = 0;
+                    next_indices[batch_i] += 1;
+                    next_positions[batch_i] += 1;
+                    if next_indices[batch_i] as usize >= context {
+                        next_indices[batch_i] = 0;
                     }
                 }
 
@@ -206,6 +227,9 @@ impl ScatteredCacheBuilder {
                 }
             }
         }
+        self.indices = Tensor::from_vec(next_indices, (b,), &self.device)?;
+        self.positions = Tensor::from_vec(next_positions, (b,), &self.device)?;
+
         let mask = Tensor::from_vec(attention_masks, (b, 1, seq_len, context), &self.device)?
             .to_dtype(self.dtype)?;
         let indices = Tensor::from_vec(cache_indices, (b, seq_len), &self.device)?;
@@ -221,24 +245,34 @@ impl ScatteredCacheBuilder {
         let mask = self.get_mask_abs(seq_len, seq_len)?;
         let b = self.batch_size();
         let mut cache_indices = Vec::with_capacity(b);
+
+        // This is slow as we move back to CPU.
+        let indices_cpu = self.indices.to_vec1::<u32>()?;
+        let positions_cpu = self.positions.to_vec1::<u32>()?;
+        let mut next_indices = indices_cpu.clone();
+        let mut next_positions = positions_cpu.clone();
+
         for (batch_i, &active) in batch_mask.iter().enumerate() {
             if !active {
-                let indices = vec![self.indices[batch_i] as u32; seq_len];
+                let indices = vec![next_indices[batch_i]; seq_len];
                 cache_indices.push(indices);
             } else {
                 let mut indices = Vec::with_capacity(seq_len);
                 for _ in 0..seq_len {
-                    let index = self.indices[batch_i];
-                    indices.push(index as u32);
-                    self.indices[batch_i] += 1;
-                    self.positions[batch_i] += 1;
-                    if self.indices[batch_i] >= self.context {
-                        self.indices[batch_i] = 0;
+                    let index = next_indices[batch_i];
+                    indices.push(index);
+                    next_indices[batch_i] += 1;
+                    next_positions[batch_i] += 1;
+                    if next_indices[batch_i] as usize >= self.context {
+                        next_indices[batch_i] = 0;
                     }
                 }
                 cache_indices.push(indices);
             }
         }
+        self.indices = Tensor::from_vec(next_indices, (b,), &self.device)?;
+        self.positions = Tensor::from_vec(next_positions, (b,), &self.device)?;
+
         let indices = Tensor::new(cache_indices, &self.device)?;
         Ok(IndicesAndMask { indices, mask })
     }

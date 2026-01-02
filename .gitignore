@@ -212,3 +212,10 @@ assets/
 # Visual Studio Code
 .vscode/
 backup/
+
+# Profiling
+*.nsys-rep
+profiling/
+
+# Tool output
+clippy_log.txt

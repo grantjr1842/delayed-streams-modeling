@@ -320,8 +320,8 @@ impl StreamingMultiheadCrossAttention {
                     if self.is_quantized() { kv.to_dtype(matmul_dtype(xs.device()))? } else { kv };
                 let k = kv.i((.., .., 0))?;
                 let v = kv.i((.., .., 1))?;
-                let k = k.transpose(1, 2)?.contiguous()?; // b,h,k,d
-                let v = v.transpose(1, 2)?.contiguous()?; // b,h,k,d
+                let k = k.transpose(1, 2)?; // b,h,k,d
+                let v = v.transpose(1, 2)?; // b,h,k,d
                 Ok((k, v))
             }
         }
@@ -341,7 +341,7 @@ impl StreamingMultiheadCrossAttention {
         let (k, v) = self.compute_kv(ca_src)?;
         // qk_layer_norm = None
         // kv_repeat = 1, otherwise we would need repeat_kv
-        let q = q.transpose(1, 2)?.contiguous()?; // b,h,t,d
+        let q = q.transpose(1, 2)?; // b,h,t,d
 
         let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
         let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;
@@ -523,9 +523,6 @@ impl StreamingMultiheadAttention {
                 .in_scope(|| flash_attn(&q, &k, &v, softmax_scale, mask.is_some()))?
                 .transpose(1, 2)?
         } else {
-            let q = q.contiguous()?;
-            let k = k.contiguous()?;
-            let v = v.contiguous()?;
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
             let pre_ws = (pre_ws * (self.head_dim as f64).powf(-0.5))?;
 

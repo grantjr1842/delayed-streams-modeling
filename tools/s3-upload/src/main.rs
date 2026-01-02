@@ -52,18 +52,12 @@ struct Cli {
     acl: Option<String>,
 }
 
+#[derive(Default)]
 struct PublishStats {
     uploaded: usize,
     skipped: usize,
     dry_run_uploads: usize,
     bytes_uploaded: u64,
-}
-
-// Quick fix for struct field initialization above
-impl Default for PublishStats {
-    fn default() -> Self {
-        Self { uploaded: 0, skipped: 0, dry_run_uploads: 0, bytes_uploaded: 0 }
-    }
 }
 
 fn compute_md5(path: &Path) -> Result<String> {
@@ -89,7 +83,7 @@ fn human_bytes(value: u64) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     if !cli.source.exists() {
         anyhow::bail!("Source directory {:?} does not exist.", cli.source);
     }
@@ -141,7 +135,7 @@ async fn main() -> Result<()> {
         };
 
         let md5_hex = compute_md5(path)?;
-        
+
         let needs_upload = if cli.force {
             true
         } else {
@@ -163,7 +157,7 @@ async fn main() -> Result<()> {
                              }
                          }
                     }
-                    
+
                     if remote_match {
                         stats.skipped += 1;
                         println!("[skip] {} unchanged (s3://{}/{})", rel_path.display(), cli.bucket, s3_key);
@@ -194,13 +188,13 @@ async fn main() -> Result<()> {
                         "private" => ObjectCannedAcl::Private,
                         "public-read" => ObjectCannedAcl::PublicRead,
                         // Add others if needed, clap could handle enum
-                        _ => ObjectCannedAcl::Private, 
+                        _ => ObjectCannedAcl::Private,
                     };
                     req = req.acl(acl);
                 }
 
                 req.send().await.context(format!("Failed to upload {}", path.display()))?;
-                
+
                 let size = fs::metadata(path)?.len();
                 stats.uploaded += 1;
                 stats.bytes_uploaded += size;

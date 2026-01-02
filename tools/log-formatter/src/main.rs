@@ -12,7 +12,7 @@ struct Cli {
     /// Raw Moshi log (use '-' to read from stdin).
     input: String,
 
-    /// Output path for the formatted log; defaults to the parent of the 
+    /// Output path for the formatted log; defaults to the parent of the
     /// 'raw' directory so the sanitized log lives alongside the raw trace.
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -32,11 +32,11 @@ fn infer_output_path(input_path: &Path) -> PathBuf {
             }
         }
     }
-    
+
     let file_name = input_path.file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("output.log");
-        
+
     input_path.with_file_name(format!("friendly-{}", file_name))
 }
 
@@ -72,43 +72,45 @@ fn reformat_line(line: &str, strip_raw: bool, ansi_regex: &Regex) -> String {
     if sanitized.is_empty() {
         return String::new();
     }
-    
+
     let tokens: Vec<&str> = sanitized.splitn(4, char::is_whitespace).collect();
     if tokens.len() < 3 {
         return if strip_raw { sanitized.trim().to_string() } else { sanitized };
     }
-    
+
     let timestamp_str = tokens[0];
     let level = tokens[1];
     let target = tokens[2];
     let rest = if tokens.len() == 4 { tokens[3] } else { "" };
-    
+
     if let Some(dt) = parse_timestamp(timestamp_str) {
         let formatted_ts = format_timestamp(dt);
         let target_clean = target.trim_end_matches(':');
         let body = rest.trim();
-        
+
         let mut parts = vec![
             format!("[{}]", formatted_ts),
             format!("[{}]", level.to_uppercase()),
             format!("[{}]", target_clean),
         ];
-        
+
         if !body.is_empty() {
             parts.push(body.to_string());
         }
-        
+
         parts.join(" ")
+    } else if strip_raw {
+        sanitized.trim().to_string()
     } else {
-        if strip_raw { sanitized.trim().to_string() } else { sanitized }
+        sanitized
     }
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     let ansi_regex = Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]")?;
-    
+
     let input_source: Box<dyn BufRead> = if cli.input == "-" {
         Box::new(BufReader::new(io::stdin()))
     } else {
@@ -141,6 +143,6 @@ fn main() -> Result<()> {
         let formatted = reformat_line(&line, cli.strip_raw, &ansi_regex);
         writeln!(output_writer, "{}", formatted)?;
     }
-    
+
     Ok(())
 }

@@ -371,30 +371,6 @@ pub fn downmix_u16_to_mono_into(data: &[u16], channels: usize, out: &mut Vec<f32
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_level_silence() {
-        let samples = vec![0.0; 1920];
-        let level = AudioLevel::compute(&samples);
-        assert!(level.rms_db <= DB_FLOOR + 0.1);
-        assert!(level.peak_db <= DB_FLOOR + 0.1);
-        assert!(level.is_silent());
-    }
-
-    #[test]
-    fn test_level_full_scale() {
-        let samples: Vec<f32> = (0..1920)
-            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
-            .collect();
-        let level = AudioLevel::compute(&samples);
-        assert!((level.rms_db - 0.0).abs() < 0.1);
-        assert!((level.peak_db - 0.0).abs() < 0.1);
-    }
-}
-
 #[cfg(feature = "audio")]
 pub struct AudioPlayer {
     pub _stream: cpal::Stream,
@@ -653,4 +629,28 @@ pub async fn run_pulse_writer(
         let _ = pp.write_f32(&pending[pending_pos..]).await;
     }
     pp.finish(finish_timeout).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_level_silence() {
+        let samples = vec![0.0; 1920];
+        let level = AudioLevel::compute(&samples);
+        assert!(level.rms_db <= DB_FLOOR + 0.1);
+        assert!(level.peak_db <= DB_FLOOR + 0.1);
+        assert!(level.is_silent());
+    }
+
+    #[test]
+    fn test_level_full_scale() {
+        let samples: Vec<f32> = (0..1920)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let level = AudioLevel::compute(&samples);
+        assert!((level.rms_db - 0.0).abs() < 0.1);
+        assert!((level.peak_db - 0.0).abs() < 0.1);
+    }
 }

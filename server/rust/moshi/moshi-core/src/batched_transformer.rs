@@ -105,9 +105,6 @@ impl StreamingMultiheadAttention {
         };
 
         let xs = {
-            let q = q.contiguous()?;
-            let k = k.contiguous()?;
-            let v = v.contiguous()?;
             let pre_ws = q.matmul(&k.t()?)?; // b,h,t,k
             let pre_ws = (pre_ws * (head_dim as f64).powf(-0.5))?;
             let pre_ws = pre_ws.broadcast_add(iam.mask())?;

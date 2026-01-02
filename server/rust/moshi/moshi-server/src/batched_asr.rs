@@ -72,20 +72,17 @@ struct Channel {
     in_rx: InRecv,
     out_tx: OutSend,
     data: VecDeque<f32>,
-    decoder: kaudio::ogg_opus::Decoder,
     steps: usize,
 }
 
 impl Channel {
     fn new(in_rx: InRecv, out_tx: OutSend) -> Result<Self> {
         metrics::OPEN_CHANNELS.inc();
-        let decoder = kaudio::ogg_opus::Decoder::new(24000, FRAME_SIZE)?;
         Ok(Self {
             id: ChannelId::new(),
             in_rx,
             out_tx,
             data: VecDeque::new(),
-            decoder,
             steps: 0,
         })
     }
@@ -594,16 +591,8 @@ impl BatchedAsrInner {
                                 marker_id: id,
                             }));
                         }
-                        Ok(InMsg::OggOpus { data }) => {
-                            match c.decoder.decode(&data) {
-                                Err(err) => tracing::error!(?err, "oggopus not supported"),
-                                Ok(None) => {}
-                                Ok(Some(pcm)) => {
-                                    out_pcm.copy_from_slice(pcm);
-                                    c.steps += 1;
-                                    mask_val = true;
-                                }
-                            }
+                        Ok(InMsg::OggOpus { .. }) => {
+                            tracing::warn!("OggOpus message received in pre-process, should have been decoded in handle_socket");
                         }
                         Ok(InMsg::Audio { pcm }) => {
                             if c.extend_data(&pcm, out_pcm) {
@@ -902,6 +891,7 @@ impl BatchedAsr {
         };
         tracing::info!(batch_idx, "batched-asr channel");
         in_tx.send(InMsg::Init)?;
+        let mut decoder = kaudio::ogg_opus::Decoder::new(24000, FRAME_SIZE)?;
 
         crate::utils::spawn("recv_loop", async move {
             let mut receiver = receiver;
@@ -946,7 +936,19 @@ impl BatchedAsr {
                         continue;
                     }
                 };
-                in_tx.send(msg)?;
+
+                match msg {
+                    InMsg::OggOpus { data } => {
+                        match decoder.decode(&data) {
+                            Ok(Some(pcm)) => {
+                                in_tx.send(InMsg::Audio { pcm: pcm.to_vec() })?;
+                            }
+                            Ok(None) => {}
+                            Err(err) => tracing::error!(?err, "oggopus decoding error"),
+                        }
+                    }
+                    m => in_tx.send(m)?,
+                }
             }
             Ok::<_, anyhow::Error>(())
         });

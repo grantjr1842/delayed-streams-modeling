@@ -142,7 +142,7 @@ impl State {
     fn apply_repetition_penalty(&self, logits: Tensor) -> candle::Result<Tensor> {
         let (context_size, penalty) = match self.repetition_penalty {
             None => return Ok(logits),
-            Some((_, p)) if p == 1.0 => return Ok(logits),
+            Some((_, 1.0)) => return Ok(logits),
             Some(cp) => cp,
         };
 
@@ -163,7 +163,7 @@ impl State {
             non_pad_tokens += 1;
 
             if already_seen.insert(token_id) {
-                to_penalize.push(token_id as u32);
+                to_penalize.push(token_id);
             }
         }
 
@@ -176,8 +176,8 @@ impl State {
         let penalized_logits = logits.index_select(&to_penalize, 0)?;
         let is_pos = penalized_logits.ge(0f32)?;
         let p = is_pos.where_cond(
-            &Tensor::new(1.0 / penalty as f32, device)?.broadcast_as(penalized_logits.shape())?,
-            &Tensor::new(penalty as f32, device)?.broadcast_as(penalized_logits.shape())?,
+            &Tensor::new(1.0 / penalty, device)?.broadcast_as(penalized_logits.shape())?,
+            &Tensor::new(penalty, device)?.broadcast_as(penalized_logits.shape())?,
         )?;
         let penalized_logits = penalized_logits.broadcast_mul(&p)?;
         let diff = (penalized_logits - logits.index_select(&to_penalize, 0)?)?;
@@ -215,13 +215,19 @@ impl State {
             if t == UNGENERATED {
                 candle::bail!("internal error, ungenerated {} {codebook}", self.step_idx)
             }
-            let t = Tensor::from_vec(vec![t; batch_size], (batch_size, 1), dev)?;
+            let t = if batch_size == 1 {
+                Tensor::from_slice(&[t], (1, 1), dev)?
+            } else {
+                Tensor::from_slice(&[t, t], (2, 1), dev)?
+            };
             codes.push(Some(t))
         }
         let text_token = match text_token {
-            Some(text_token) => {
-                Some(Tensor::from_vec(vec![text_token; batch_size], (batch_size, 1), dev)?)
-            }
+            Some(text_token) => Some(if batch_size == 1 {
+                Tensor::from_slice(&[text_token], (1, 1), dev)?
+            } else {
+                Tensor::from_slice(&[text_token, text_token], (2, 1), dev)?
+            }),
             None => None,
         };
         let (text_logits, ys) = match ca_src.as_ref() {

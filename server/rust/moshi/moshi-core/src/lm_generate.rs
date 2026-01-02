@@ -120,7 +120,7 @@ impl State {
             };
             let t = match t {
                 None => None,
-                Some(t) => Some(Tensor::from_vec(vec![t; 1], (1, 1), dev)?),
+                Some(t) => Some(Tensor::from_slice(&[t], (1, 1), dev)?),
             };
             codes.push(t)
         }
@@ -137,7 +137,7 @@ impl State {
         };
         let text_token = match text_token {
             None => None,
-            Some(t) => Some(Tensor::from_vec(vec![t; 1], (1, 1), dev)?),
+            Some(t) => Some(Tensor::from_slice(&[t], (1, 1), dev)?),
         };
         let (text_logits, ys) =
             self.model.forward_cond(text_token, codes, conditions, &().into())?;

@@ -170,8 +170,8 @@ impl ScatteredCacheBuilder {
         let mut cache_indices = Vec::with_capacity(b * seq_len);
         for (batch_i, &active) in batch_mask.iter().enumerate() {
             if !active {
-                attention_masks.extend(std::iter::repeat(0.0).take(seq_len * context));
-                cache_indices.extend(std::iter::repeat(self.indices[batch_i] as u32).take(seq_len));
+                attention_masks.extend(std::iter::repeat_n(0.0, seq_len * context));
+                cache_indices.extend(std::iter::repeat_n(self.indices[batch_i] as u32, seq_len));
             } else {
                 let start_index = self.indices[batch_i];
                 let start_pos = self.positions[batch_i];

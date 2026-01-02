@@ -273,7 +273,7 @@ impl StreamableConv1d {
 
     pub fn reset_batch_idx(&mut self, batch_idx: usize, _batch_size: usize) -> Result<()> {
         if let Some(v) = self.state_prev_xs.as_option() {
-            let v = v.contiguous()?;
+            let v = if v.is_contiguous() { v.clone() } else { v.contiguous()? };
             v.i(batch_idx..(1 + batch_idx))?.zero_set()?;
             self.state_prev_xs = StreamTensor::from_tensor(v);
         }
@@ -414,7 +414,7 @@ impl StreamableConvTranspose1d {
 
     pub fn reset_batch_idx(&mut self, batch_idx: usize, _batch_size: usize) -> Result<()> {
         if let Some(v) = self.state_prev_ys.as_option() {
-            let v = v.contiguous()?;
+            let v = if v.is_contiguous() { v.clone() } else { v.contiguous()? };
             v.i(batch_idx..(1 + batch_idx))?.zero_set()?;
             self.state_prev_ys = v.into();
         }

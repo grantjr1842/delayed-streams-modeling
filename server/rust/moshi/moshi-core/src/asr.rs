@@ -20,17 +20,15 @@ pub struct ItemState {
     unended_word: bool,
     last_stop_time: f64,
     audio_pad_token: u32,
-    next_codebooks: Vec<u32>,
 }
 
 impl ItemState {
-    fn reset(&mut self) {
+    fn reset(&mut self, text_start_token: u32) {
         self.step_idx = 0;
-        self.text_token = 0;
+        self.text_token = text_start_token;
         self.word_tokens.clear();
         self.unended_word = false;
         self.last_stop_time = 0.;
-        self.next_codebooks.fill(self.audio_pad_token);
     }
 
     pub fn text_token(&self) -> u32 {
@@ -41,15 +39,6 @@ impl ItemState {
         self.step_idx == 0
     }
 
-    pub fn next_token(&mut self, codebook_idx: usize, token: u32) -> u32 {
-        let v = self.next_codebooks[codebook_idx];
-        self.next_codebooks[codebook_idx] = token;
-        if self.is_first_step() {
-            self.audio_pad_token
-        } else {
-            v
-        }
-    }
 }
 
 pub struct State {
@@ -60,6 +49,7 @@ pub struct State {
     pub audio_tokenizer: Mimi,
     pub device: candle::Device,
     pub batch: Vec<ItemState>,
+    pub next_codebooks: Tensor,
 }
 
 impl State {
@@ -79,8 +69,8 @@ impl State {
             step_idx: 0,
             last_stop_time: 0.,
             audio_pad_token: lm.audio_pad_token(),
-            next_codebooks: vec![lm.audio_pad_token(); lm.in_audio_codebooks()],
         };
+        let next_codebooks = Tensor::full(lm.audio_pad_token(), (batch_size, lm.in_audio_codebooks()), &device)?;
         let mut s = Self {
             asr_delay_in_tokens,
             lm,
@@ -89,6 +79,7 @@ impl State {
             temperature,
             device,
             batch: vec![item_state; batch_size],
+            next_codebooks,
         };
         s.reset()?;
         Ok(s)
@@ -111,9 +102,11 @@ impl State {
     }
 
     pub fn reset(&mut self) -> Result<()> {
+        let text_start_token = self.lm.text_start_token();
         self.lm.reset_state();
         self.audio_tokenizer.reset_state();
-        self.batch.iter_mut().for_each(|s| s.reset());
+        self.batch.iter_mut().for_each(|s| s.reset(text_start_token));
+        self.next_codebooks = Tensor::full(self.lm.audio_pad_token(), self.next_codebooks.shape(), &self.device)?;
         Ok(())
     }
 
@@ -165,21 +158,21 @@ impl State {
         }
         let mut words = vec![];
         for step in 0..steps {
-            let audio_tokens_cpu = audio_tokens.narrow(2, step, 1)?
-                .reshape((batch_size, codebooks))?
-                .to_vec2::<u32>()?;
-            let mut next_tokens_cpu = vec![0u32; batch_size * codebooks];
-            for batch_idx in 0..batch_size {
-                for codebook_idx in 0..codebooks {
-                    let token = if !mask.is_active(batch_idx) {
-                        0
-                    } else {
-                        self.batch[batch_idx].next_token(codebook_idx, audio_tokens_cpu[batch_idx][codebook_idx])
-                    };
-                    next_tokens_cpu[batch_idx * codebooks + codebook_idx] = token;
+            let audio_step_tokens = audio_tokens.narrow(2, step, 1)?.reshape((batch_size, codebooks))?;
+            let mut next_tokens_t = self.next_codebooks.clone();
+
+            // Handle is_first_step and mask
+            for (batch_idx, item) in self.batch.iter().enumerate() {
+                if item.is_first_step() {
+                    let pad = Tensor::full(item.audio_pad_token, (1, codebooks), &self.device)?;
+                    next_tokens_t = next_tokens_t.slice_assign(&[batch_idx..batch_idx+1], &pad)?;
+                }
+                if mask.is_active(batch_idx) {
+                    let step_tokens = audio_step_tokens.narrow(0, batch_idx, 1)?;
+                    self.next_codebooks = self.next_codebooks.slice_assign(&[batch_idx..batch_idx+1], &step_tokens)?;
                 }
             }
-            let next_tokens_t = Tensor::from_vec(next_tokens_cpu, (batch_size, codebooks), &self.device)?;
+
             let audio_tokens = (0..codebooks)
                 .map(|i| Ok(next_tokens_t.narrow(1, i, 1)?))
                 .collect::<Result<Vec<_>>>()?;
@@ -254,7 +247,8 @@ impl State {
         if batch_idx >= self.batch_size() {
             candle::bail!("batch index out of range: {batch_idx} >= {}", self.batch_size());
         }
-        self.batch[batch_idx].reset();
+        let text_start_token = self.lm.text_start_token();
+        self.batch[batch_idx].reset(text_start_token);
         self.lm.reset_batch_idx(batch_idx, self.batch_size())?;
         self.audio_tokenizer.reset_batch_idx(batch_idx, self.batch_size())?;
         Ok(())

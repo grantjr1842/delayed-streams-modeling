@@ -1009,11 +1009,23 @@ impl StreamingModule for StreamingTransformer {
         self.layers.iter_mut().for_each(|v| v.reset_kv_cache())
     }
 
-    fn step(&mut self, xs: &StreamTensor, _: &StreamMask) -> Result<StreamTensor> {
-        // TODO: Use the StreamMask
+    fn step(&mut self, xs: &StreamTensor, mask: &StreamMask) -> Result<StreamTensor> {
         match xs.as_option() {
             None => Ok(StreamTensor::empty()),
-            Some(xs) => Ok(StreamTensor::from_tensor(self.forward(xs)?)),
+            Some(xs) => {
+                if mask.cpu().is_some_and(|m| m.iter().all(|&v| !v)) {
+                    return Ok(StreamTensor::empty());
+                }
+                let ys = self.forward(xs)?;
+                let ys = match mask.as_option() {
+                    None => ys,
+                    Some(m) => {
+                        let m = m.reshape((m.dim(0)?, 1, 1))?.to_dtype(ys.dtype())?;
+                        ys.broadcast_mul(&m)?
+                    }
+                };
+                Ok(StreamTensor::from_tensor(ys))
+            }
         }
     }
 }
@@ -1087,6 +1099,9 @@ impl StreamingModule for ProjectedTransformer {
     }
 
     fn step(&mut self, xs: &StreamTensor, m: &StreamMask) -> Result<StreamTensor> {
+        if m.cpu().is_some_and(|v| v.iter().all(|&b| !b)) {
+            return Ok(StreamTensor::empty());
+        }
         let xs = xs.apply(&|x: &Tensor| {
             if self.conv_layout {
                 x.transpose(1, 2)

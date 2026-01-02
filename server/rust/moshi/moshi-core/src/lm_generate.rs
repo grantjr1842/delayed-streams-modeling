@@ -62,7 +62,6 @@ impl State {
         text_lp: LogitsProcessor,
         config: Config,
     ) -> Self {
-        // TODO(laurent): handle a batch dimension.
         let total_len = max_step_idx + config.max_audio_delay();
         let audio_tokens = vec![vec![Token::Ungenerated; config.audio_codebooks()]; total_len];
         let text_tokens = vec![Token::Ungenerated; total_len];

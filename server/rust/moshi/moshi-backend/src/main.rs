@@ -45,7 +45,7 @@ pub struct BenchmarkArgs {
     #[clap(short = 'r', long, default_value_t = 1)]
     reps: usize,
 
-    #[clap(short = 's', long)]
+    #[clap(short = 't', long)]
     stat_file: Option<String>,
 
     #[clap(long)]

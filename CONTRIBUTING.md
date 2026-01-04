@@ -1,5 +1,28 @@
 # Contributing to Delayed-Streams-Modeling
 
+## Development Setup
+
+### Prerequisites
+- Rust 1.70+ with CUDA support for GPU features
+- Node.js 18+ (for TypeScript components)
+- Python 3.9+ (for some tools and scripts)
+
+### Quick Start
+```bash
+# Clone the repository
+git clone https://github.com/kyutai-labs/delayed-streams-modeling.git
+cd delayed-streams-modeling
+
+# Install Rust dependencies
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+
+# Run linting
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
 ## Pull Requests
 
 Delayed-Streams-Modeling is the implementation of a research paper.
@@ -11,6 +34,20 @@ However, we certainly welcome them for bug fixes.
 3. Ensure pre-commit hooks pass properly, in particular the linting and typing.
 4. When changing the Rust code, run `cargo check`, `cargo clippy`, `cargo test`.
 5. Accept the Contributor License Agreement (see after).
+
+### Code Quality Standards
+- Use `cargo fmt` for code formatting
+- Address all clippy warnings (`-D warnings`)
+- Write tests for new functionality
+- Avoid `unwrap()` and `expect()` in production code
+- Use proper error handling with `Result` types
+- Document public APIs with rustdoc comments
+
+### Performance Considerations
+- Profile code changes using `cargo bench`
+- Avoid unnecessary allocations and clones
+- Use appropriate data structures for the use case
+- Consider async/await for I/O operations
 
 Note that in general, we will not accept refactoring of the code.
 

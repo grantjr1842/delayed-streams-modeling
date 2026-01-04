@@ -168,7 +168,12 @@ pub(crate) fn setup_output_stream_map<F: FnMut(String) + Send + 'static>(
         &config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             data.fill(0.);
-            let mut ad = ad.lock().unwrap();
+            let mut ad = if let Ok(guard) = ad.lock() {
+                guard
+            } else {
+                tracing::error!("Failed to lock audio data in output callback");
+                return;
+            };
             let mut last_elem = 0f32;
             loop {
                 let should_pop = match ad.subs.front() {
@@ -236,7 +241,12 @@ pub(crate) fn setup_input_stream() -> Result<(cpal::Stream, AudioOutputData)> {
     let stream = device.build_input_stream(
         &config,
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            let mut ad = ad.lock().unwrap();
+            let mut ad = if let Ok(guard) = ad.lock() {
+                guard
+            } else {
+                tracing::error!("Failed to lock audio data in input callback");
+                return;
+            };
             if !data.is_empty() {
                 let l = data.len() as f32;
                 let mean = data.iter().sum::<f32>() / l;

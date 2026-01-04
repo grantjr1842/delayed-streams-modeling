@@ -28,6 +28,7 @@ keywords = ["machine-learning", "audio"]
 categories = ["science"]
 
 [workspace.dependencies]
+# Core dependencies with version pinning for security and stability
 anyhow = "1"
 axum = { version = "0.8.7", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
@@ -117,3 +118,16 @@ strip = "symbols"
 [profile.release-no-debug]
 inherits = "release"
 debug = false
+
+[profile.dev]
+opt-level = 1
+debug = true
+
+[profile.dev-opt]
+inherits = "dev"
+opt-level = 2
+debug = false
+
+[profile.bench]
+inherits = "release"
+debug = true

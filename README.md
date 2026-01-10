@@ -162,6 +162,18 @@ You can configure the server by modifying `configs/tts/config-tts.toml`. See com
 TTS configs live under `configs/tts/` (see `configs/README.md` for layout).
 </details>
 
+## Developer Resources
+
+For developers working on the codebase, additional documentation is available:
+
+- [Architecture Overview](docs/ARCHITECTURE.md) - System design and component architecture
+- [Development Guide](docs/DEVELOPMENT.md) - Coding standards and workflow
+- [Server Setup](docs/MOSHI_SERVER_SETUP.md) - Detailed server configuration
+- [Technical Knowledge Base](.agent/docs/technical_knowledge.md) - Patterns, debugging, and optimization insights
+- [Developer Onboarding](.agent/docs/onboarding.md) - Quick-start guide for new contributors
+
+Architecture Decision Records (ADRs) are maintained in [.agent/docs/adr/](.agent/docs/adr/).
+
 ## FAQ
 
 Checkout the [Frequently Asked Questions](FAQ.md) section before opening an issue.
@@ -180,12 +192,12 @@ The weights for the speech-to-text models are released under the CC-BY 4.0 licen
 Please cite the following paper.
 ```
 @techreport{kyutai2025streaming,
-      title={Streaming Sequence-to-Sequence Learning with Delayed Streams Modeling}, 
+      title={Streaming Sequence-to-Sequence Learning with Delayed Streams Modeling},
       author={Neil Zeghidour and Eugene Kharitonov and Manu Orsini and Václav Volhejn and Gabriel de Marmiesse and Edouard Grave and Patrick Pérez and Laurent Mazaré and Alexandre Défossez},
       year={2025},
       eprint={2509.08753},
       archivePrefix={arXiv},
       primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2509.08753}, 
+      url={https://arxiv.org/abs/2509.08753},
 }
 ```

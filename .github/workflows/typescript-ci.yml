@@ -1,0 +1,48 @@
+name: TypeScript CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/typescript/**'
+      - '.github/workflows/typescript-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/typescript/**'
+      - '.github/workflows/typescript-ci.yml'
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: server/typescript/auth-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: server/typescript/auth-server/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome check
+        run: pnpm run check
+
+      - name: Run tests
+        run: pnpm test
+        env:
+          BETTER_AUTH_SECRET: test-secret-for-ci
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
